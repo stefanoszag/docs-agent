@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(uv init *)"
+      "Bash(uv init *)",
+      "Bash(.venv/bin/python -m py_compile agent.py prompts.py)"
     ]
   }
 }
