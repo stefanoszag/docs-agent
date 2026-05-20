@@ -10,7 +10,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph import add_messages
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from prompts import CLASSIFIER_PROMPT, RAG_PROMPT, REPHRASE_PROMPT
+from prompts import CHITCHAT_PROMPT, CLASSIFIER_PROMPT, GATE_PROMPT, RAG_PROMPT, REPHRASE_PROMPT
 
 MAX_RETRIES = 1
 
@@ -33,7 +33,8 @@ class AgentState(TypedDict):
     docs: list[tuple[Document, float]]
     attempts: int
     answer: str
-    route: str
+    gate_result: str      # "proceed" | "chitchat" | "abuse"
+    route: str            # "in_scope" | "out_of_scope" (set by classify)
     messages: Annotated[list[AnyMessage], add_messages]  # persisted conversation history
 
 
@@ -58,6 +59,30 @@ def build_graph(settings: Settings, checkpointer=None):
     parser = StrOutputParser()
 
     # --- nodes ---
+
+    def gate(state: AgentState) -> dict:
+        result = (GATE_PROMPT | llm | parser).invoke({"question": state["question"]}).strip().lower()
+        if "abuse" in result:
+            gate_result = "abuse"
+        elif "chitchat" in result:
+            gate_result = "chitchat"
+        else:
+            gate_result = "proceed"
+        return {"gate_result": gate_result}
+
+    def respond_chitchat(state: AgentState) -> dict:
+        answer = (CHITCHAT_PROMPT | llm | parser).invoke({"question": state["question"]}).strip()
+        return {
+            "answer": answer,
+            "messages": [HumanMessage(content=state["question"]), AIMessage(content=answer)],
+        }
+
+    def respond_guardrail(state: AgentState) -> dict:
+        answer = "I'm not able to respond to that. Please keep our conversation respectful."
+        return {
+            "answer": answer,
+            "messages": [HumanMessage(content=state["question"]), AIMessage(content=answer)],
+        }
 
     def classify(state: AgentState) -> dict:
         result = (CLASSIFIER_PROMPT | llm | parser).invoke({"question": state["question"]})
@@ -99,6 +124,14 @@ def build_graph(settings: Settings, checkpointer=None):
 
     # --- conditional routers ---
 
+    def route_after_gate(state: AgentState) -> str:
+        gr = state["gate_result"]
+        if gr == "abuse":
+            return "respond_guardrail"
+        if gr == "chitchat":
+            return "respond_chitchat"
+        return "classify"
+
     def route_after_classify(state: AgentState) -> str:
         return "retrieve" if state["route"] == "in_scope" else END
 
@@ -116,13 +149,19 @@ def build_graph(settings: Settings, checkpointer=None):
     # --- graph ---
 
     graph = StateGraph(AgentState)
+    graph.add_node("gate", gate)
+    graph.add_node("respond_chitchat", respond_chitchat)
+    graph.add_node("respond_guardrail", respond_guardrail)
     graph.add_node("classify", classify)
     graph.add_node("retrieve", retrieve)
     graph.add_node("rephrase", rephrase)
     graph.add_node("generate", generate)
     graph.add_node("give_up", give_up)
 
-    graph.add_edge(START, "classify")
+    graph.add_edge(START, "gate")
+    graph.add_conditional_edges("gate", route_after_gate)
+    graph.add_edge("respond_chitchat", END)
+    graph.add_edge("respond_guardrail", END)
     graph.add_conditional_edges("classify", route_after_classify)
     graph.add_conditional_edges("retrieve", route_after_retrieve)
     graph.add_edge("rephrase", "retrieve")
@@ -149,6 +188,7 @@ def main() -> None:
                 "docs": [],
                 "attempts": 0,
                 "answer": "",
+                "gate_result": "",
                 "route": "",
                 "messages": [],
             })

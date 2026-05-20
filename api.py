@@ -76,6 +76,7 @@ def ask(req: AskRequest) -> AskResponse:
             "docs": [],
             "attempts": 0,
             "answer": "",
+            "gate_result": "",
             "route": "",
             "messages": [],
         },
