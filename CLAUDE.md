@@ -57,7 +57,7 @@ Goal: wrap Phase 1 pipeline in a LangGraph graph with basic agent logic.
 ### Phase 3 — FastAPI + Chat History
 Goal: make it usable as a proper service.
 - FastAPI endpoint: POST /ask accepts a question, returns an answer
-- Conversation memory: maintain chat history within a session
+- Conversation memory: LangGraph PostgresSaver checkpointer keyed by session thread_id, backed by the existing Postgres DB (requires langgraph-checkpoint-postgres)
 - Basic HTML/JS frontend served by FastAPI: chat UI with message history display
 - Key learning: stateful agents, session management
 
