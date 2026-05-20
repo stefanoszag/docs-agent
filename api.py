@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 import psycopg
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.postgres import PostgresSaver
 from pydantic import BaseModel
@@ -29,7 +30,9 @@ settings = Settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    conn = psycopg.connect(settings.db_url, autocommit=True)
+    # PGVector needs the SQLAlchemy driver prefix; psycopg3 does not
+    pg_url = settings.db_url.replace("postgresql+psycopg2://", "postgresql://")
+    conn = psycopg.connect(pg_url, autocommit=True)
     checkpointer = PostgresSaver(conn)
     checkpointer.setup()
     app.state.graph = build_graph(settings, checkpointer)
@@ -77,3 +80,7 @@ def get_history(session_id: str) -> list[HistoryMessage]:
         )
         for m in state.values.get("messages", [])
     ]
+
+
+# serve the HTML frontend — mounted last so API routes take precedence
+app.mount("/", StaticFiles(directory="static", html=True), name="static")

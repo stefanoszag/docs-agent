@@ -27,8 +27,11 @@ Never hardcode the IP.
 ```
 docs-agent/
 ├── docs/                   # Source markdown documents to ingest
+├── static/                 # HTML frontend served by FastAPI
+│   └── index.html          # Chat UI (vanilla JS, no build step)
 ├── ingest.py               # Chunk, embed, and store docs into pgvector
-├── agent.py                # Query pipeline / LangGraph agent
+├── agent.py                # LangGraph agent (graph + nodes)
+├── api.py                  # FastAPI app (Phase 3+)
 ├── prompts.py              # Prompt templates (keep separate from logic)
 ├── docker-compose.yml      # Postgres + pgvector
 ├── pyproject.toml          # Dependencies managed by uv
