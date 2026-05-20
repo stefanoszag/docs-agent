@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>docs-agent</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --sidebar-bg: #171717;
+      --sidebar-text: #e5e5e5;
+      --sidebar-muted: #737373;
+      --sidebar-hover: rgba(255,255,255,0.06);
+      --sidebar-active: rgba(255,255,255,0.1);
+      --bg: #f5f5f5;
+      --surface: #ffffff;
+      --border: #e5e5e5;
+      --text: #171717;
+      --text-muted: #6b7280;
+      --user-bg: #2563eb;
+      --user-text: #ffffff;
+      --ai-bg: #f3f4f6;
+      --ai-text: #171717;
+      --accent: #2563eb;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      height: 100vh;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ---- sidebar ---- */
+
+    #sidebar {
+      width: 240px;
+      flex-shrink: 0;
+      background: var(--sidebar-bg);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #new-chat {
+      margin: 12px;
+      padding: 10px 14px;
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 8px;
+      color: var(--sidebar-text);
+      font-size: 0.875rem;
+      font-family: inherit;
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.15s;
+      flex-shrink: 0;
+    }
+
+    #new-chat:hover { background: var(--sidebar-hover); }
+
+    #session-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0 8px 8px;
+    }
+
+    #session-list::-webkit-scrollbar { width: 4px; }
+    #session-list::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.1);
+      border-radius: 2px;
+    }
+
+    .session-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+      border-left: 2px solid transparent;
+    }
+
+    .session-item:hover { background: var(--sidebar-hover); }
+
+    .session-item.active {
+      background: var(--sidebar-active);
+      border-left-color: var(--accent);
+    }
+
+    .session-title {
+      flex: 1;
+      font-size: 0.8125rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--sidebar-muted);
+    }
+
+    .session-item:hover .session-title,
+    .session-item.active .session-title { color: var(--sidebar-text); }
+
+    .delete-btn {
+      opacity: 0;
+      background: none;
+      border: none;
+      color: var(--sidebar-muted);
+      cursor: pointer;
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      flex-shrink: 0;
+      transition: opacity 0.15s, color 0.15s;
+      line-height: 1;
+    }
+
+    .session-item:hover .delete-btn { opacity: 1; }
+    .delete-btn:hover { color: #ef4444; }
+
+    /* ---- main ---- */
+
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      background: var(--bg);
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      font-size: 1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    header .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #22c55e;
+    }
+
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      gap: 8px;
+    }
+
+    .empty-state h2 { font-size: 1.1rem; font-weight: 500; color: var(--text); }
+    .empty-state p { font-size: 0.875rem; }
+
+    .message {
+      display: flex;
+      flex-direction: column;
+      max-width: 72%;
+    }
+
+    .message.user { align-self: flex-end; align-items: flex-end; }
+    .message.ai   { align-self: flex-start; align-items: flex-start; }
+
+    .label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      padding: 0 4px;
+    }
+
+    .bubble {
+      padding: 12px 16px;
+      border-radius: 16px;
+      line-height: 1.5;
+      font-size: 0.95rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .message.user .bubble {
+      background: var(--user-bg);
+      color: var(--user-text);
+      border-bottom-right-radius: 4px;
+    }
+
+    .message.ai .bubble {
+      background: var(--ai-bg);
+      color: var(--ai-text);
+      border-bottom-left-radius: 4px;
+    }
+
+    .typing {
+      display: flex;
+      gap: 4px;
+      padding: 14px 16px;
+      background: var(--ai-bg);
+      border-radius: 16px;
+      border-bottom-left-radius: 4px;
+    }
+
+    .typing span {
+      width: 6px;
+      height: 6px;
+      background: var(--text-muted);
+      border-radius: 50%;
+      animation: bounce 1.2s infinite;
+    }
+
+    .typing span:nth-child(2) { animation-delay: 0.2s; }
+    .typing span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30%           { transform: translateY(-6px); }
+    }
+
+    #input-area {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-end;
+      flex-shrink: 0;
+    }
+
+    #question {
+      flex: 1;
+      resize: none;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-family: inherit;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      max-height: 160px;
+      outline: none;
+      color: var(--text);
+      background: var(--bg);
+      transition: border-color 0.15s;
+    }
+
+    #question:focus { border-color: var(--accent); }
+
+    #send {
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      padding: 12px 20px;
+      font-size: 0.95rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    #send:hover   { opacity: 0.9; }
+    #send:disabled { opacity: 0.4; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+
+  <aside id="sidebar">
+    <button id="new-chat">+ New chat</button>
+    <div id="session-list"></div>
+  </aside>
+
+  <div id="main">
+    <header>
+      <span class="dot"></span>
+      docs-agent
+    </header>
+    <div id="chat">
+      <div class="empty-state" id="empty">
+        <h2>Ask a question</h2>
+        <p>Answers are grounded in your project documentation.</p>
+      </div>
+    </div>
+    <div id="input-area">
+      <textarea id="question" rows="1" placeholder="Ask about your docs…"></textarea>
+      <button id="send">Send</button>
+    </div>
+  </div>
+
+  <script>
+    const chatEl      = document.getElementById('chat');
+    const input       = document.getElementById('question');
+    const sendBtn     = document.getElementById('send');
+    const emptyEl     = document.getElementById('empty');
+    const sessionList = document.getElementById('session-list');
+
+    let currentSessionId = localStorage.getItem('docs_agent_session');
+    if (!currentSessionId) {
+      currentSessionId = crypto.randomUUID();
+      localStorage.setItem('docs_agent_session', currentSessionId);
+    }
+
+    // ---- session sidebar ----
+
+    async function loadSessions() {
+      try {
+        const res = await fetch('/sessions');
+        if (!res.ok) return;
+        renderSessions(await res.json());
+      } catch (_) {}
+    }
+
+    function renderSessions(sessions) {
+      sessionList.innerHTML = '';
+      sessions.forEach(s => {
+        const item = document.createElement('div');
+        item.className = 'session-item' + (s.session_id === currentSessionId ? ' active' : '');
+        item.dataset.id = s.session_id;
+
+        const title = document.createElement('span');
+        title.className = 'session-title';
+        title.textContent = s.title;
+        title.title = s.title;
+
+        const del = document.createElement('button');
+        del.className = 'delete-btn';
+        del.textContent = '✕';
+        del.title = 'Delete';
+        del.addEventListener('click', e => deleteSession(s.session_id, e));
+
+        item.appendChild(title);
+        item.appendChild(del);
+        item.addEventListener('click', () => switchSession(s.session_id));
+        sessionList.appendChild(item);
+      });
+    }
+
+    function setActive(sessionId) {
+      document.querySelectorAll('.session-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.id === sessionId);
+      });
+    }
+
+    // ---- chat actions ----
+
+    function clearChat() {
+      chatEl.innerHTML = '';
+      chatEl.appendChild(emptyEl);
+      emptyEl.style.display = '';
+    }
+
+    async function switchSession(sessionId) {
+      currentSessionId = sessionId;
+      localStorage.setItem('docs_agent_session', sessionId);
+      setActive(sessionId);
+      clearChat();
+      await loadHistory();
+      input.focus();
+    }
+
+    function newChat() {
+      currentSessionId = crypto.randomUUID();
+      localStorage.setItem('docs_agent_session', currentSessionId);
+      setActive(null);   // deselects all existing items
+      clearChat();
+      input.focus();
+    }
+
+    async function deleteSession(sessionId, e) {
+      e.stopPropagation();
+      try { await fetch(`/sessions/${sessionId}`, { method: 'DELETE' }); } catch (_) {}
+
+      const wasActive = sessionId === currentSessionId;
+      await loadSessions();
+
+      if (wasActive) {
+        const next = sessionList.querySelector('.session-item');
+        next ? switchSession(next.dataset.id) : newChat();
+      }
+    }
+
+    // ---- messages ----
+
+    function appendMessage(role, content) {
+      emptyEl.style.display = 'none';
+
+      const wrapper = document.createElement('div');
+      wrapper.className = `message ${role}`;
+
+      const label = document.createElement('div');
+      label.className = 'label';
+      label.textContent = role === 'user' ? 'You' : 'docs-agent';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = content;
+
+      wrapper.appendChild(label);
+      wrapper.appendChild(bubble);
+      chatEl.appendChild(wrapper);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function showTyping() {
+      emptyEl.style.display = 'none';
+      const wrapper = document.createElement('div');
+      wrapper.className = 'message ai';
+
+      const label = document.createElement('div');
+      label.className = 'label';
+      label.textContent = 'docs-agent';
+
+      const dots = document.createElement('div');
+      dots.className = 'typing';
+      dots.innerHTML = '<span></span><span></span><span></span>';
+
+      wrapper.appendChild(label);
+      wrapper.appendChild(dots);
+      chatEl.appendChild(wrapper);
+      chatEl.scrollTop = chatEl.scrollHeight;
+      return wrapper;
+    }
+
+    async function loadHistory() {
+      try {
+        const res = await fetch(`/sessions/${currentSessionId}/history`);
+        if (!res.ok) return;
+        (await res.json()).forEach(m =>
+          appendMessage(m.role === 'human' ? 'user' : 'ai', m.content)
+        );
+      } catch (_) {}
+    }
+
+    async function sendQuestion() {
+      const question = input.value.trim();
+      if (!question) return;
+
+      input.value = '';
+      input.style.height = 'auto';
+      sendBtn.disabled = true;
+      input.disabled = true;
+
+      appendMessage('user', question);
+      const typingEl = showTyping();
+
+      try {
+        const res = await fetch('/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, session_id: currentSessionId }),
+        });
+
+        typingEl.remove();
+
+        if (!res.ok) {
+          appendMessage('ai', 'Something went wrong. Please try again.');
+          return;
+        }
+
+        appendMessage('ai', (await res.json()).answer);
+        await loadSessions();          // adds the session to sidebar if it's the first message
+        setActive(currentSessionId);
+      } catch (_) {
+        typingEl.remove();
+        appendMessage('ai', 'Could not reach the server. Is it running?');
+      } finally {
+        sendBtn.disabled = false;
+        input.disabled = false;
+        input.focus();
+      }
+    }
+
+    // ---- input behaviour ----
+
+    input.addEventListener('input', () => {
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+    });
+
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuestion(); }
+    });
+
+    sendBtn.addEventListener('click', sendQuestion);
+    document.getElementById('new-chat').addEventListener('click', newChat);
+
+    // ---- init ----
+    loadSessions();
+    loadHistory();
+  </script>
+</body>
+</html>

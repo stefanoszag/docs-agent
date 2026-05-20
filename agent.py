@@ -1,11 +1,13 @@
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
 from langchain_community.chat_models import ChatOllama
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.vectorstores import PGVector
 from langchain_core.documents import Document
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph import add_messages
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from prompts import CLASSIFIER_PROMPT, RAG_PROMPT, REPHRASE_PROMPT
@@ -32,13 +34,14 @@ class AgentState(TypedDict):
     attempts: int
     answer: str
     route: str
+    messages: Annotated[list[AnyMessage], add_messages]  # persisted conversation history
 
 
 def format_docs(docs: list[tuple[Document, float]]) -> str:
     return "\n\n---\n\n".join(doc.page_content for doc, _ in docs)
 
 
-def build_graph(settings: Settings):
+def build_graph(settings: Settings, checkpointer=None):
     embeddings = OllamaEmbeddings(
         base_url=settings.ollama_base_url,
         model=settings.embedding_model,
@@ -59,8 +62,14 @@ def build_graph(settings: Settings):
     def classify(state: AgentState) -> dict:
         result = (CLASSIFIER_PROMPT | llm | parser).invoke({"question": state["question"]})
         route = "in_scope" if "in_scope" in result.strip().lower() else "out_of_scope"
-        answer = "" if route == "in_scope" else "This question is outside the scope of the available documentation."
-        return {"route": route, "answer": answer}
+        if route == "out_of_scope":
+            answer = "This question is outside the scope of the available documentation."
+            return {
+                "route": route,
+                "answer": answer,
+                "messages": [HumanMessage(content=state["question"]), AIMessage(content=answer)],
+            }
+        return {"route": route, "answer": ""}
 
     def retrieve(state: AgentState) -> dict:
         docs = store.similarity_search_with_score(state["active_question"], k=settings.retriever_k)
@@ -76,10 +85,17 @@ def build_graph(settings: Settings):
             "context": format_docs(state["docs"]),
             "question": state["question"],
         })
-        return {"answer": answer}
+        return {
+            "answer": answer,
+            "messages": [HumanMessage(content=state["question"]), AIMessage(content=answer)],
+        }
 
-    def give_up(_state: AgentState) -> dict:
-        return {"answer": "I don't have enough information in the documentation to answer this question reliably."}
+    def give_up(state: AgentState) -> dict:
+        answer = "I don't have enough information in the documentation to answer this question reliably."
+        return {
+            "answer": answer,
+            "messages": [HumanMessage(content=state["question"]), AIMessage(content=answer)],
+        }
 
     # --- conditional routers ---
 
@@ -113,7 +129,7 @@ def build_graph(settings: Settings):
     graph.add_edge("generate", END)
     graph.add_edge("give_up", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 def main() -> None:
@@ -134,6 +150,7 @@ def main() -> None:
                 "attempts": 0,
                 "answer": "",
                 "route": "",
+                "messages": [],
             })
             print(f"\nA: {result['answer']}\n")
         except KeyboardInterrupt:
