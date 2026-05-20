@@ -1,25 +1,25 @@
 # docs-agent
 
-A local RAG-based knowledge agent that answers questions about your project documentation. Drop markdown files into `docs/`, run the ingest script once, then ask questions via the CLI.
+A local RAG-based knowledge agent that answers questions about your project documentation. Drop markdown files into `docs/`, run the ingest script once, then ask questions via a chat UI or CLI.
 
-Built on LangChain + LangGraph, pgvector, and Ollama — everything runs locally.
+Built on LangChain + LangGraph, pgvector, FastAPI, and Ollama — everything runs locally.
 
-## How it works
+## What it does
 
 ### Ingest (`ingest.py`)
 
 A one-time setup script that populates the vector database from your markdown files:
 
 1. **Load** — reads all `.md` files recursively from `docs/`
-2. **Split** — breaks each document into 1000-character chunks with 200-character overlap so context isn't lost at boundaries
-3. **Embed** — sends each chunk to Ollama (`nomic-embed-text`) to produce a vector representation
-4. **Store** — writes the chunks and their vectors into Postgres via pgvector
+2. **Split** — breaks each document into 1000-character chunks with 200-character overlap
+3. **Embed** — sends each chunk to Ollama (`nomic-embed-text`) to produce a vector
+4. **Store** — writes chunks and vectors into Postgres via pgvector
 
-Re-run ingest any time you add or update documents. It clears and repopulates the collection each run.
+Re-run any time you add or update documents. It clears and repopulates the collection each run.
 
 ### Agent (`agent.py`)
 
-A LangGraph state machine with four nodes and conditional routing:
+A LangGraph state machine that handles each question through a pipeline of nodes:
 
 ```
 User question
@@ -39,11 +39,37 @@ User question
     └── score ≥ 0.5, attempt 2 ──→ "not enough information"
 ```
 
-- **classify** — LLM decides whether the question is answerable from the docs before doing any retrieval
-- **retrieve** — embeds the current question, queries pgvector for the 4 nearest chunks, returns them with their cosine distance scores
-- **confidence gate** — if the best match score is ≥ 0.5 (too distant), it doesn't generate an answer
-- **rephrase** — LLM rephrases the question with different keywords to improve retrieval, then retries once
-- **generate** — passes retrieved context + original question to the LLM and returns the answer
+- **classify** — LLM decides if the question is answerable from the docs before doing any retrieval
+- **retrieve** — queries pgvector for the 4 nearest chunks with cosine distance scores
+- **confidence gate** — if the best score is ≥ 0.5 (too distant), avoids generating a hallucinated answer
+- **rephrase** — LLM rewrites the question with different keywords and retries retrieval once
+- **generate** — passes retrieved context + original question to the LLM
+
+### API (`api.py`)
+
+A FastAPI server that wraps the agent and manages multiple persistent chat sessions:
+
+| Endpoint | Description |
+|---|---|
+| `GET /` | Chat UI |
+| `POST /ask` | Ask a question `{question, session_id}` |
+| `GET /sessions` | List all sessions |
+| `GET /sessions/{id}/history` | Full message history for a session |
+| `DELETE /sessions/{id}` | Delete a session and its checkpoint data |
+| `GET /health` | Health check |
+
+Session history is persisted to Postgres via LangGraph's `PostgresSaver` checkpointer. Each session is keyed by a `session_id` UUID, which the browser generates and stores in `localStorage`.
+
+### Frontend (`static/index.html`)
+
+A vanilla JS chat UI served by FastAPI:
+
+- Dark sidebar lists all past sessions, ordered by most recent
+- Click any session to restore its full conversation history
+- **+ New chat** starts a fresh session
+- Hover a session to reveal a delete button
+- Typing indicator while waiting for a response
+- Enter to send, Shift+Enter for a new line
 
 ## Stack
 
@@ -53,6 +79,8 @@ User question
 | Embeddings | Ollama — nomic-embed-text |
 | Vector store | pgvector (Postgres) |
 | Orchestration | LangChain + LangGraph |
+| Session memory | LangGraph PostgresSaver |
+| API | FastAPI + uvicorn |
 | Infrastructure | Docker Compose |
 
 ## Prerequisites
@@ -61,7 +89,7 @@ User question
 - [Docker](https://www.docker.com) for Postgres
 - [uv](https://github.com/astral-sh/uv) for Python package management
 
-## Setup
+## Running locally
 
 **1. Clone and install dependencies**
 
@@ -77,7 +105,7 @@ Create a `.env` file:
 
 ```env
 OLLAMA_BASE_URL=http://<ollama-host>:11434
-DB_URL=postgresql://docsagent:docsagent@localhost:5432/docsagent
+DB_URL=postgresql+psycopg2://docsagent:docsagent@localhost:5432/docsagent
 ```
 
 **3. Start Postgres**
@@ -88,29 +116,42 @@ docker compose up -d
 
 **4. Add your docs**
 
-Drop markdown files into the `docs/` directory.
-
-**5. Ingest**
+Drop markdown files into the `docs/` directory, then ingest them:
 
 ```bash
 uv run python ingest.py
 ```
 
-**6. Run the agent**
+**5. Start the server**
+
+```bash
+uv run uvicorn api:app --reload
+```
+
+Open [http://localhost:8000](http://localhost:8000).
+
+**CLI (no server needed)**
 
 ```bash
 uv run python agent.py
 ```
 
+## Project structure
+
 ```
-Building LangGraph agent (LLM: llama3.1:8b)...
-Ready. Type your question (Ctrl+C to exit)
-
-Q: How does authentication work?
-
-  [confidence] best score: 0.312 (threshold: 0.5)
-
-A: Authentication uses ...
+docs-agent/
+├── docs/                   # Source markdown documents to ingest
+├── static/
+│   └── index.html          # Chat UI (vanilla JS, no build step)
+├── ingest.py               # Chunk, embed, and store docs into pgvector
+├── agent.py                # LangGraph agent (graph, nodes, state)
+├── api.py                  # FastAPI app — HTTP endpoints + session management
+├── prompts.py              # Prompt templates
+├── docker-compose.yml      # Postgres + pgvector
+├── pyproject.toml          # Dependencies managed by uv
+├── uv.lock                 # Committed to git
+├── .env                    # OLLAMA_BASE_URL, DB_URL (never commit)
+└── .env.example            # Placeholder values for reference
 ```
 
 ## Configuration
@@ -124,6 +165,6 @@ All settings can be overridden via `.env`:
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Ollama embedding model |
 | `LLM_MODEL` | `llama3.1:8b` | Ollama chat model |
 | `RETRIEVER_K` | `4` | Number of chunks to retrieve |
-| `CONFIDENCE_THRESHOLD` | `0.5` | Cosine distance cutoff (lower = stricter) |
+| `CONFIDENCE_THRESHOLD` | `0.5` | Cosine distance cutoff — lower means stricter |
 | `CHUNK_SIZE` | `1000` | Characters per chunk (ingest only) |
 | `CHUNK_OVERLAP` | `200` | Overlap between chunks (ingest only) |
