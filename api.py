@@ -25,6 +25,12 @@ class HistoryMessage(BaseModel):
     content: str
 
 
+class SessionSummary(BaseModel):
+    session_id: str
+    title: str
+    created_at: str
+
+
 settings = Settings()
 
 
@@ -33,8 +39,19 @@ async def lifespan(app: FastAPI):
     # PGVector needs the SQLAlchemy driver prefix; psycopg3 does not
     pg_url = settings.db_url.replace("postgresql+psycopg2://", "postgresql://")
     conn = psycopg.connect(pg_url, autocommit=True)
+
     checkpointer = PostgresSaver(conn)
     checkpointer.setup()
+
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS agent_sessions (
+                session_id TEXT PRIMARY KEY,
+                title      TEXT        NOT NULL DEFAULT 'New chat',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+
     app.state.graph = build_graph(settings, checkpointer)
     app.state.conn = conn
     yield
@@ -64,7 +81,29 @@ def ask(req: AskRequest) -> AskResponse:
         },
         config=config,
     )
+    with app.state.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO agent_sessions (session_id, title)
+            VALUES (%s, %s)
+            ON CONFLICT (session_id) DO NOTHING
+            """,
+            (req.session_id, req.question[:80]),
+        )
     return AskResponse(answer=result["answer"], session_id=req.session_id)
+
+
+@app.get("/sessions", response_model=list[SessionSummary])
+def list_sessions() -> list[SessionSummary]:
+    with app.state.conn.cursor() as cur:
+        cur.execute(
+            "SELECT session_id, title, created_at FROM agent_sessions ORDER BY created_at DESC"
+        )
+        rows = cur.fetchall()
+    return [
+        SessionSummary(session_id=r[0], title=r[1], created_at=r[2].isoformat())
+        for r in rows
+    ]
 
 
 @app.get("/sessions/{session_id}/history", response_model=list[HistoryMessage])
@@ -80,6 +119,15 @@ def get_history(session_id: str) -> list[HistoryMessage]:
         )
         for m in state.values.get("messages", [])
     ]
+
+
+@app.delete("/sessions/{session_id}", status_code=204)
+def delete_session(session_id: str) -> None:
+    with app.state.conn.cursor() as cur:
+        cur.execute("DELETE FROM agent_sessions WHERE session_id = %s", (session_id,))
+        cur.execute("DELETE FROM checkpoints WHERE thread_id = %s", (session_id,))
+        cur.execute("DELETE FROM checkpoint_blobs WHERE thread_id = %s", (session_id,))
+        cur.execute("DELETE FROM checkpoint_writes WHERE thread_id = %s", (session_id,))
 
 
 # serve the HTML frontend — mounted last so API routes take precedence
