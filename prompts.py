@@ -29,3 +29,24 @@ REPHRASE_PROMPT = ChatPromptTemplate.from_messages([
     ),
     ("human", "{question}"),
 ])
+
+GATE_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "Classify the user message into exactly one of three categories:\n"
+        "- 'proceed': a genuine question or request that may relate to software documentation\n"
+        "- 'chitchat': conversational messages such as greetings, thanks, small talk, or farewells\n"
+        "- 'abuse': harmful, offensive, threatening, or clearly inappropriate content\n\n"
+        "Reply with exactly one word: proceed, chitchat, or abuse.",
+    ),
+    ("human", "{question}"),
+])
+
+CHITCHAT_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are a friendly documentation assistant. The user has sent a conversational message. "
+        "Reply briefly and warmly in one or two sentences. Do not answer technical questions.",
+    ),
+    ("human", "{question}"),
+])

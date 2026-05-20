@@ -25,6 +25,13 @@ A LangGraph state machine that handles each question through a pipeline of nodes
 User question
     │
     ▼
+  gate ──── chitchat ──→ friendly reply
+    │
+    ├── abuse ──────────→ firm refusal (no LLM)
+    │
+  proceed
+    │
+    ▼
  classify ──── out_of_scope ──→ "outside scope of documentation"
     │
   in_scope
@@ -39,6 +46,10 @@ User question
     └── score ≥ 0.5, attempt 2 ──→ "not enough information"
 ```
 
+- **gate** — first stop for every message; classifies it as `proceed`, `chitchat`, or `abuse` with a single LLM call
+  - *chitchat* (greetings, thanks, small talk) → short friendly reply
+  - *abuse* (offensive or harmful content) → hardcoded refusal, no LLM involved
+  - *proceed* → continues to the doc pipeline below
 - **classify** — LLM decides if the question is answerable from the docs before doing any retrieval
 - **retrieve** — queries pgvector for the 4 nearest chunks with cosine distance scores
 - **confidence gate** — if the best score is ≥ 0.5 (too distant), avoids generating a hallucinated answer
