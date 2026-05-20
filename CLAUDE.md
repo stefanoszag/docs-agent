@@ -15,7 +15,7 @@ these skills to a production ML team knowledge agent at work.
 - **Embedding model:** nomic-embed-text via Ollama
 - **Vector store:** pgvector (Postgres extension)
 - **Orchestration:** LangChain + LangGraph
-- **API layer:** Flask
+- **API layer:** FastAPI
 - **Infrastructure:** Docker Compose (local Postgres + pgvector)
 
 ## Ollama Connection
@@ -54,12 +54,18 @@ Goal: wrap Phase 1 pipeline in a LangGraph graph with basic agent logic.
 - Retry logic: if confidence is low, try rephrasing the query and search again
 - Key learning: LangGraph nodes, edges, state management
 
-### Phase 3 — Flask API + Chat History
+### Phase 3 — FastAPI + Chat History
 Goal: make it usable as a proper service.
-- Flask endpoint: POST /ask accepts a question, returns an answer
+- FastAPI endpoint: POST /ask accepts a question, returns an answer
 - Conversation memory: maintain chat history within a session
-- Optional: basic HTML frontend or CLI with history display
+- Basic HTML/JS frontend served by FastAPI: chat UI with message history display
 - Key learning: stateful agents, session management
+
+### Phase 4 — React Frontend
+Goal: replace the HTML frontend with a proper React app.
+- Standalone React app (Vite) that talks to the FastAPI backend
+- Chat UI with message history, loading states, and error handling
+- Key learning: decoupled frontend/backend, React basics
 
 ## Coding Conventions
 - Python with type hints throughout
@@ -74,7 +80,7 @@ Goal: make it usable as a proper service.
 ```bash
 # Add dependencies
 uv add langchain langchain-community langgraph pgvector psycopg2-binary python-dotenv pydantic
-uv add flask                          # Phase 3 only
+uv add fastapi uvicorn                # Phase 3 only
 
 # Start local Postgres with pgvector
 docker compose up -d
@@ -85,8 +91,8 @@ uv run python ingest.py
 # Run the agent (Phase 1: CLI)
 uv run python agent.py
 
-# Run Flask API (Phase 3)
-uv run flask run
+# Run FastAPI server (Phase 3)
+uv run uvicorn api:app --reload
 ```
 
 Dependencies are managed via pyproject.toml and uv.lock — both committed to git.
