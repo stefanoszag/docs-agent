@@ -6,7 +6,9 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.136.1",
     "langchain>=0.3.30",
+    "langchain-anthropic>=1.4.3",
     "langchain-community>=0.3.31",
+    "langchain-openai>=1.2.1",
     "langgraph>=0.6.11",
     "langgraph-checkpoint-postgres>=3.1.0",
     "pgvector>=0.4.2",
