@@ -1,4 +1,4 @@
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 RAG_PROMPT = ChatPromptTemplate.from_messages([
     (
@@ -7,7 +7,32 @@ RAG_PROMPT = ChatPromptTemplate.from_messages([
         "Use only the context below to answer. If the answer isn't in the context, say you don't know.\n\n"
         "Context:\n{context}",
     ),
+    MessagesPlaceholder(variable_name="history", optional=True),
     ("human", "{question}"),
+])
+
+QUERY_REWRITE_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "Given the conversation history and the user's latest message, determine if the message "
+        "is a follow-up that relies on prior context. If so, rewrite it as a complete, self-contained "
+        "question suitable for document retrieval. If it is already self-contained, return it unchanged. "
+        "Reply with only the question, nothing else.",
+    ),
+    MessagesPlaceholder(variable_name="history"),
+    ("human", "{question}"),
+])
+
+GROUNDING_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are a fact-checker. Given source chunks and an answer, decide if the answer is fully "
+        "supported by the sources. Reply with exactly one word: 'grounded' or 'not_grounded'.",
+    ),
+    (
+        "human",
+        "Sources:\n{context}\n\nAnswer:\n{answer}",
+    ),
 ])
 
 CLASSIFIER_PROMPT = ChatPromptTemplate.from_messages([
