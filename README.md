@@ -32,29 +32,47 @@ User question
   proceed
     │
     ▼
+ rewrite_query  (rewrite vague follow-ups using conversation history)
+    │
+    ▼
  classify ──── out_of_scope ──→ "outside scope of documentation"
     │
   in_scope
     │
     ▼
- retrieve  (embed question → vector search → top 4 chunks)
-    │
-    ├── score < 0.5 ──────────→ generate ──→ answer
+ retrieve  (BM25 + vector search → RRF merge → top chunks)
     │
     ├── score ≥ 0.5, attempt 1 ──→ rephrase ──→ retrieve (retry)
     │
-    └── score ≥ 0.5, attempt 2 ──→ "not enough information"
+    ├── score ≥ 0.5, attempt 2 ──→ "not enough information"
+    │
+  confident
+    │
+    ▼
+ rerank  (cross-encoder reorders chunks by relevance)
+    │
+    ▼
+ generate  (retrieved context + conversation history → LLM)
+    │
+    ▼
+ grounding_check ──── not grounded ──→ "not enough information"
+    │
+  grounded
+    │
+    ▼
+  answer
 ```
 
-- **gate** — first stop for every message; classifies it as `proceed`, `chitchat`, or `abuse` with a single LLM call
+- **gate** — first stop for every message; one LLM call classifies as `proceed`, `chitchat`, or `abuse`
   - *chitchat* (greetings, thanks, small talk) → short friendly reply
   - *abuse* (offensive or harmful content) → hardcoded refusal, no LLM involved
-  - *proceed* → continues to the doc pipeline below
-- **classify** — LLM decides if the question is answerable from the docs before doing any retrieval
-- **retrieve** — queries pgvector for the 4 nearest chunks with cosine distance scores
-- **confidence gate** — if the best score is ≥ 0.5 (too distant), avoids generating a hallucinated answer
-- **rephrase** — LLM rewrites the question with different keywords and retries retrieval once
-- **generate** — passes retrieved context + original question to the LLM
+- **rewrite_query** — if conversation history exists, rewrites vague follow-ups ("can you expand on that?") into self-contained retrieval queries; no-op on first turn
+- **classify** — LLM decides if the (rewritten) question is answerable from the docs
+- **retrieve** — runs BM25 keyword search and vector search in parallel, merges with Reciprocal Rank Fusion; stores raw vector cosine distance as `confidence_score` for the gate check
+- **confidence gate** — if best vector score is ≥ 0.5 (too distant), avoids generating; retries with a rephrased query once before giving up
+- **rerank** — cross-encoder (`ms-marco-MiniLM-L-6-v2`) rescores and reorders chunks for quality before generation
+- **generate** — passes retrieved context + last 3 turns of conversation history to the LLM
+- **grounding_check** — LLM-as-judge verifies the answer is supported by the retrieved chunks; discards hallucinated answers
 
 ### API (`api.py`)
 
@@ -89,6 +107,8 @@ A vanilla JS chat UI served by FastAPI:
 | LLM | Ollama — Llama 3.1 8B |
 | Embeddings | Ollama — nomic-embed-text |
 | Vector store | pgvector (Postgres) |
+| Keyword search | BM25 (rank-bm25) |
+| Re-ranking | cross-encoder/ms-marco-MiniLM-L-6-v2 (sentence-transformers) |
 | Orchestration | LangChain + LangGraph |
 | Session memory | LangGraph PostgresSaver |
 | API | FastAPI + uvicorn |
@@ -179,3 +199,5 @@ All settings can be overridden via `.env`:
 | `CONFIDENCE_THRESHOLD` | `0.5` | Cosine distance cutoff — lower means stricter |
 | `CHUNK_SIZE` | `1000` | Characters per chunk (ingest only) |
 | `CHUNK_OVERLAP` | `200` | Overlap between chunks (ingest only) |
+| `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | HuggingFace cross-encoder for re-ranking |
+| `HISTORY_WINDOW` | `6` | Number of messages (3 Q&A pairs) passed to prompts |
