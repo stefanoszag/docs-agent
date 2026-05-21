@@ -191,13 +191,44 @@ All settings can be overridden via `.env`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `OLLAMA_BASE_URL` | — | Ollama server URL (required) |
 | `DB_URL` | — | Postgres connection string (required) |
-| `EMBEDDING_MODEL` | `nomic-embed-text` | Ollama embedding model |
-| `LLM_MODEL` | `llama3.1:8b` | Ollama chat model |
+| `LLM_PROVIDER` | `ollama` | Chat model provider: `ollama`, `anthropic`, `openai` |
+| `EMBEDDING_PROVIDER` | `ollama` | Embedding provider: `ollama`, `openai` |
+| `LLM_MODEL` | `llama3.1:8b` | Model name for the chosen provider |
+| `EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model name for the chosen provider |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL (only required for Ollama provider) |
 | `RETRIEVER_K` | `4` | Number of chunks to retrieve |
 | `CONFIDENCE_THRESHOLD` | `0.5` | Cosine distance cutoff — lower means stricter |
 | `CHUNK_SIZE` | `1000` | Characters per chunk (ingest only) |
 | `CHUNK_OVERLAP` | `200` | Overlap between chunks (ingest only) |
 | `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | HuggingFace cross-encoder for re-ranking |
 | `HISTORY_WINDOW` | `6` | Number of messages (3 Q&A pairs) passed to prompts |
+
+## Switching LLM providers
+
+Ollama is the default. To switch, update `.env` and restart the server.
+If you change the embedding provider you must also re-run `ingest.py` — vectors
+in pgvector are tied to the model that produced them.
+
+**Anthropic (Claude)**
+```env
+LLM_PROVIDER=anthropic
+LLM_MODEL=claude-sonnet-4-6
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+**OpenAI**
+```env
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o
+EMBEDDING_PROVIDER=openai
+EMBEDDING_MODEL=text-embedding-3-small
+OPENAI_API_KEY=sk-...
+```
+
+**Ollama (default)**
+```env
+LLM_PROVIDER=ollama
+LLM_MODEL=llama3.1:8b
+OLLAMA_BASE_URL=http://192.168.x.x:11434
+```

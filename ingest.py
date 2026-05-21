@@ -10,9 +10,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
 
-    ollama_base_url: str
     db_url: str
+    embedding_provider: str = "ollama"  # ollama | openai
     embedding_model: str = "nomic-embed-text"
+    ollama_base_url: str = "http://localhost:11434"
     docs_dir: str = "docs"
     chunk_size: int = 1000
     chunk_overlap: int = 200
@@ -50,10 +51,14 @@ def ingest() -> None:
     chunks = split_documents(docs, settings.chunk_size, settings.chunk_overlap)
     print(f"Split {len(docs)} document(s) into {len(chunks)} chunks")
 
-    embeddings = OllamaEmbeddings(
-        base_url=settings.ollama_base_url,
-        model=settings.embedding_model,
-    )
+    if settings.embedding_provider == "openai":
+        from langchain_openai import OpenAIEmbeddings
+        embeddings = OpenAIEmbeddings(model=settings.embedding_model)
+    else:
+        embeddings = OllamaEmbeddings(
+            base_url=settings.ollama_base_url,
+            model=settings.embedding_model,
+        )
 
     print(f"Embedding and storing chunks (model: {settings.embedding_model})...")
     PGVector.from_documents(

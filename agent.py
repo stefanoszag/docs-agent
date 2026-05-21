@@ -4,6 +4,8 @@ import psycopg2
 from langchain_community.chat_models import ChatOllama
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.retrievers import BM25Retriever
+from langchain_core.language_models import BaseChatModel
+from langchain_core.embeddings import Embeddings
 from langchain_community.vectorstores import PGVector
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
@@ -30,15 +32,34 @@ RRF_K = 60
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
 
-    ollama_base_url: str
     db_url: str
-    embedding_model: str = "nomic-embed-text"
+    llm_provider: str = "ollama"        # ollama | anthropic | openai
+    embedding_provider: str = "ollama"  # ollama | openai
     llm_model: str = "llama3.1:8b"
+    embedding_model: str = "nomic-embed-text"
+    ollama_base_url: str = "http://localhost:11434"  # only required for ollama provider
     collection_name: str = "docs"
     retriever_k: int = 4
     confidence_threshold: float = 0.5
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     history_window: int = 6  # number of messages (3 Q&A pairs) passed to prompts
+
+
+def _build_llm(settings: Settings) -> BaseChatModel:
+    if settings.llm_provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+        return ChatAnthropic(model=settings.llm_model)
+    if settings.llm_provider == "openai":
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(model=settings.llm_model)
+    return ChatOllama(base_url=settings.ollama_base_url, model=settings.llm_model)
+
+
+def _build_embeddings(settings: Settings) -> Embeddings:
+    if settings.embedding_provider == "openai":
+        from langchain_openai import OpenAIEmbeddings
+        return OpenAIEmbeddings(model=settings.embedding_model)
+    return OllamaEmbeddings(base_url=settings.ollama_base_url, model=settings.embedding_model)
 
 
 class AgentState(TypedDict):
@@ -99,19 +120,13 @@ def rrf_merge(
 
 
 def build_graph(settings: Settings, checkpointer=None):
-    embeddings = OllamaEmbeddings(
-        base_url=settings.ollama_base_url,
-        model=settings.embedding_model,
-    )
+    embeddings = _build_embeddings(settings)
     store = PGVector(
         connection_string=settings.db_url,
         embedding_function=embeddings,
         collection_name=settings.collection_name,
     )
-    llm = ChatOllama(
-        base_url=settings.ollama_base_url,
-        model=settings.llm_model,
-    )
+    llm = _build_llm(settings)
     parser = StrOutputParser()
 
     print("Loading documents for BM25 index...")
@@ -285,7 +300,7 @@ def build_graph(settings: Settings, checkpointer=None):
 
 def main() -> None:
     settings = Settings()
-    print(f"Building LangGraph agent (LLM: {settings.llm_model})...")
+    print(f"Building LangGraph agent (LLM: {settings.llm_model} via {settings.llm_provider})...")
     graph = build_graph(settings)
     print("Ready. Type your question (Ctrl+C to exit)\n")
 
