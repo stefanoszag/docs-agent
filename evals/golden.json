@@ -1,0 +1,82 @@
+[
+  {
+    "question": "What does this application do?",
+    "expected_answer": "PhotoPrism Google Home Integration is a Python-based automation service that bridges PhotoPrism (self-hosted photo management) with Google Photos, enabling seamless photo synchronization for Google Home devices to display."
+  },
+  {
+    "question": "What is the purpose of the Scheduler component?",
+    "expected_answer": "The Scheduler orchestrates the complete workflow on a configurable schedule. It checks Google Photos authentication, triggers the downloader to fetch photos from PhotoPrism, waits for downloads to complete, optionally triggers the resizer, triggers the uploader to sync to Google Photos, and sends an execution summary via the alert system."
+  },
+  {
+    "question": "How does the downloader select photos from PhotoPrism?",
+    "expected_answer": "The downloader reads the album_whitelist.csv to determine eligible albums, then randomly selects albums and photos from those albums. The number of albums and photos to select is read live from settings.json."
+  },
+  {
+    "question": "What alert channels does the system support?",
+    "expected_answer": "The system supports three alert channels: Email via SMTP, Slack via webhook, and Telegram via a bot."
+  },
+  {
+    "question": "What happens to local photos after they are successfully uploaded to Google Photos?",
+    "expected_answer": "After successful uploads, local files in the shared storage directory are automatically cleaned up. If any upload fails, the files are kept and a failure alert is sent."
+  },
+  {
+    "question": "How does the Settings module handle configuration?",
+    "expected_answer": "The Settings module is a thread-safe singleton that merges environment variable defaults with an optional settings.json override file. Writes are atomic using a temporary file and rename. All reads and writes are protected by a threading.RLock. If settings.json does not exist, the application falls back to environment variables."
+  },
+  {
+    "question": "What are the current scalability limitations of the system?",
+    "expected_answer": "Photos are processed sequentially one at a time, all photos go to a single Google Photos album, there is no persistent state or database, and the system is subject to PhotoPrism and Google Photos API rate limits."
+  },
+  {
+    "question": "What routes does the Web UI expose?",
+    "expected_answer": "The Web UI exposes three routes: GET / renders the settings page with current values injected via Jinja, GET /api/albums fetches all PhotoPrism albums and cross-references the whitelist CSV, and POST /api/settings validates and saves settings, overwrites the whitelist CSV, and optionally fires the run-now event."
+  },
+  {
+    "question": "How does the uploader authenticate with Google Photos?",
+    "expected_answer": "The uploader uses OAuth2 authentication with automatic token refresh via token_manager.py. If the token is valid it is returned immediately; if expired it is refreshed automatically; if no token exists the full OAuth2 browser flow is initiated."
+  },
+  {
+    "question": "How do you set up OAuth2 authentication for a remote deployment?",
+    "expected_answer": "Generate the initial token on a local machine using 'python -m uploader.token_manager generate', which requires browser interaction. Validate it with 'python -m uploader.token_manager validate', then copy both credentials.json and token.json to the remote host. The application will then automatically refresh tokens without user interaction."
+  },
+  {
+    "question": "When does a Google OAuth2 refresh token become invalid?",
+    "expected_answer": "A refresh token becomes invalid if it is not used for 6 months, if the user revokes access, if the user changes their password (with Gmail scopes), or if the maximum number of refresh tokens per user (50) is exceeded."
+  },
+  {
+    "question": "What command checks the OAuth2 token status?",
+    "expected_answer": "python -m uploader.token_manager status"
+  },
+  {
+    "question": "What are the security best practices for token storage?",
+    "expected_answer": "Tokens should never be committed to version control, should use secure file permissions (600), should be stored in encrypted files or environment variables, and secret management services should be considered for production deployments."
+  },
+  {
+    "question": "How do you build the Docker image for Linux deployment?",
+    "expected_answer": "Enable BuildKit with 'export DOCKER_BUILDKIT=1', set up buildx with 'docker buildx create --use', then build and push for linux/amd64 with 'docker buildx build --platform linux/amd64 -t yourusername/photoprism-google-sync:latest --push .'"
+  },
+  {
+    "question": "What volumes must be mounted in docker-compose.yml?",
+    "expected_answer": "Four volumes must be mounted: credentials.json as read-only, token.json for token persistence, the downloader/data directory for the album whitelist, and settings.json for persisting web UI configuration across container restarts."
+  },
+  {
+    "question": "What must you do on the host before running docker compose up for the first time?",
+    "expected_answer": "Create settings.json as a file using 'touch settings.json' and create the downloader/data directory using 'mkdir -p downloader/data'. This ensures Docker mounts them as a file and directory respectively rather than creating them as directories."
+  },
+  {
+    "question": "How do you update the container to a new version safely?",
+    "expected_answer": "Run docker-compose down -v to stop and remove containers, remove old images with docker rmi, clean up with docker system prune -f, pull the new image with docker-compose pull, and start with docker-compose up -d."
+  },
+  {
+    "question": "What environment variables are required to run the application?",
+    "expected_answer": "The required environment variables are PHOTOPRISM_SERVER_URL, PHOTOPRISM_USERNAME, PHOTOPRISM_PASSWORD, and GOOGLE_PHOTOS_ALBUM_NAME."
+  },
+  {
+    "question": "What GitHub Secrets are needed for the CI/CD pipeline?",
+    "expected_answer": "Three GitHub Secrets are required: DOCKERHUB_USERNAME for the Docker Hub username, DOCKERHUB_TOKEN for the Docker Hub access token, and APP_DIRECTORY for the absolute path to the app directory on the LXC host."
+  },
+  {
+    "question": "How do you install the self-hosted GitHub Actions runner as a system service?",
+    "expected_answer": "After configuring the runner as the github-runner user, exit to root, navigate to /home/github-runner/actions-runner, run 'sudo ./svc.sh install github-runner' to install it as a service, then 'sudo ./svc.sh start' to start it."
+  }
+]

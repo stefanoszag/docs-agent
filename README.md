@@ -204,6 +204,24 @@ All settings can be overridden via `.env`:
 | `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | HuggingFace cross-encoder for re-ranking |
 | `HISTORY_WINDOW` | `6` | Number of messages (3 Q&A pairs) passed to prompts |
 
+## Running the eval harness
+
+`eval.py` runs the golden dataset (`evals/golden.json`, 20 question/answer pairs) through the full LangGraph graph and scores three metrics per question:
+
+| Metric | Method | Range |
+|---|---|---|
+| Groundedness | LLM-as-judge — does the answer match the retrieved chunks? | 0 or 1 |
+| Answer relevance | LLM-as-judge — does the answer address the question? | 0 or 1 |
+| Retrieval precision | Keyword heuristic — fraction of retrieved chunks containing content words from the expected answer | 0.0–1.0 |
+
+Requires Ollama and Postgres to be running (same as the agent itself).
+
+```bash
+uv run python eval.py
+```
+
+Results are written to `evals/results.csv` (gitignored) with one row per question and a summary row at the end. Pass `--golden` and `--out` to override the default paths.
+
 ## Running the tests
 
 Unit tests cover `rrf_merge`, `format_docs`, all four routing functions, and every prompt template. They require no running services (no Ollama, no Postgres).
