@@ -204,6 +204,20 @@ All settings can be overridden via `.env`:
 | `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | HuggingFace cross-encoder for re-ranking |
 | `HISTORY_WINDOW` | `6` | Number of messages (3 Q&A pairs) passed to prompts |
 
+## Running the tests
+
+Unit tests cover `rrf_merge`, `format_docs`, all four routing functions, and every prompt template. They require no running services (no Ollama, no Postgres).
+
+```bash
+uv run pytest
+```
+
+For verbose output:
+
+```bash
+uv run pytest -v
+```
+
 ## Known limitations
 
 **BM25 index is held in memory.** At startup, `build_graph` loads every document chunk from the DB to build the BM25 index (`BM25Retriever.from_documents`). For a personal docs collection this is negligible, but it doesn't scale — a large corpus would consume significant RAM and slow startup. The natural fix for a production version would be to replace `rank-bm25` with Postgres full-text search (`tsvector`/`tsquery`), which runs inside the DB and scales without any in-process memory overhead.

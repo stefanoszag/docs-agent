@@ -119,6 +119,39 @@ def rrf_merge(
     return [(item["doc"], item["score"]) for item in merged]
 
 
+# --- conditional routers (module-level so they can be unit-tested) ---
+
+def route_after_gate(state: AgentState) -> str:
+    gr = state["gate_result"]
+    if gr == "abuse":
+        return "respond_guardrail"
+    if gr == "chitchat":
+        return "respond_chitchat"
+    return "rewrite_query"
+
+
+def route_after_classify(state: AgentState) -> str:
+    return "retrieve" if state["route"] == "in_scope" else END
+
+
+def route_after_retrieve(state: AgentState, confidence_threshold: float) -> str:
+    if not state["docs"]:
+        return "give_up"
+    print(f"  [confidence] best vector score: {state['confidence_score']:.3f} (threshold: {confidence_threshold})")
+    # confidence_score is cosine distance: lower = more similar = more confident.
+    # < threshold means a close match was found → rerank for quality then generate.
+    # >= threshold means poor retrieval → rephrase and retry.
+    if state["confidence_score"] < confidence_threshold:
+        return "rerank"
+    if state["attempts"] <= MAX_RETRIES:
+        return "rephrase"
+    return "give_up"
+
+
+def route_after_grounding(state: AgentState) -> str:
+    return END if state["grounded"] else "give_up"
+
+
 def build_graph(settings: Settings, checkpointer=None):
     embeddings = _build_embeddings(settings)
     store = PGVector(
@@ -241,35 +274,6 @@ def build_graph(settings: Settings, checkpointer=None):
             "messages": [HumanMessage(content=state["question"]), AIMessage(content=answer)],
         }
 
-    # --- conditional routers ---
-
-    def route_after_gate(state: AgentState) -> str:
-        gr = state["gate_result"]
-        if gr == "abuse":
-            return "respond_guardrail"
-        if gr == "chitchat":
-            return "respond_chitchat"
-        return "rewrite_query"
-
-    def route_after_classify(state: AgentState) -> str:
-        return "retrieve" if state["route"] == "in_scope" else END
-
-    def route_after_retrieve(state: AgentState) -> str:
-        if not state["docs"]:
-            return "give_up"
-        print(f"  [confidence] best vector score: {state['confidence_score']:.3f} (threshold: {settings.confidence_threshold})")
-        # confidence_score is cosine distance: lower = more similar = more confident.
-        # < threshold means a close match was found → rerank for quality then generate.
-        # >= threshold means poor retrieval → rephrase and retry.
-        if state["confidence_score"] < settings.confidence_threshold:
-            return "rerank"
-        if state["attempts"] <= MAX_RETRIES:
-            return "rephrase"
-        return "give_up"
-
-    def route_after_grounding(state: AgentState) -> str:
-        return END if state["grounded"] else "give_up"
-
     # --- graph ---
 
     graph = StateGraph(AgentState)
@@ -291,7 +295,7 @@ def build_graph(settings: Settings, checkpointer=None):
     graph.add_edge("respond_guardrail", END)
     graph.add_edge("rewrite_query", "classify")
     graph.add_conditional_edges("classify", route_after_classify)
-    graph.add_conditional_edges("retrieve", route_after_retrieve)
+    graph.add_conditional_edges("retrieve", lambda s: route_after_retrieve(s, settings.confidence_threshold))
     graph.add_edge("rephrase", "retrieve")
     graph.add_edge("rerank", "generate")
     graph.add_edge("generate", "grounding_check")
