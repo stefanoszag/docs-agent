@@ -258,6 +258,9 @@ def build_graph(settings: Settings, checkpointer=None):
         if not state["docs"]:
             return "give_up"
         print(f"  [confidence] best vector score: {state['confidence_score']:.3f} (threshold: {settings.confidence_threshold})")
+        # confidence_score is cosine distance: lower = more similar = more confident.
+        # < threshold means a close match was found → rerank for quality then generate.
+        # >= threshold means poor retrieval → rephrase and retry.
         if state["confidence_score"] < settings.confidence_threshold:
             return "rerank"
         if state["attempts"] <= MAX_RETRIES:
