@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated, TypedDict
 
 import psycopg2
@@ -24,6 +25,8 @@ from prompts import (
     RAG_PROMPT,
     REPHRASE_PROMPT,
 )
+
+logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 1
 RRF_K = 60
@@ -77,6 +80,22 @@ class AgentState(TypedDict):
 
 def format_docs(docs: list[tuple[Document, float]]) -> str:
     return "\n\n---\n\n".join(doc.page_content for doc, _ in docs)
+
+
+def initial_state(question: str) -> dict:
+    """Return a fresh AgentState dict for a new question."""
+    return {
+        "question": question,
+        "active_question": question,
+        "docs": [],
+        "attempts": 0,
+        "answer": "",
+        "confidence_score": 0.0,
+        "gate_result": "",
+        "route": "",
+        "grounded": True,
+        "messages": [],
+    }
 
 
 def load_all_documents(db_url: str, collection_name: str) -> list[Document]:
@@ -137,7 +156,7 @@ def route_after_classify(state: AgentState) -> str:
 def route_after_retrieve(state: AgentState, confidence_threshold: float) -> str:
     if not state["docs"]:
         return "give_up"
-    print(f"  [confidence] best vector score: {state['confidence_score']:.3f} (threshold: {confidence_threshold})")
+    logger.debug("[confidence] best vector score: %.3f (threshold: %.3f)", state["confidence_score"], confidence_threshold)
     # confidence_score is cosine distance: lower = more similar = more confident.
     # < threshold means a close match was found → rerank for quality then generate.
     # >= threshold means poor retrieval → rephrase and retry.
@@ -162,14 +181,14 @@ def build_graph(settings: Settings, checkpointer=None):
     llm = _build_llm(settings)
     parser = StrOutputParser()
 
-    print("Loading documents for BM25 index...")
+    logger.info("Loading documents for BM25 index...")
     all_docs = load_all_documents(settings.db_url, settings.collection_name)
     bm25 = BM25Retriever.from_documents(all_docs, k=settings.retriever_k)
-    print(f"BM25 index built from {len(all_docs)} chunks.")
+    logger.info("BM25 index built from %d chunks.", len(all_docs))
 
-    print(f"Loading reranker ({settings.reranker_model})...")
+    logger.info("Loading reranker (%s)...", settings.reranker_model)
     reranker = CrossEncoder(settings.reranker_model)
-    print("Reranker ready.")
+    logger.info("Reranker ready.")
 
     # --- nodes ---
 
@@ -206,7 +225,7 @@ def build_graph(settings: Settings, checkpointer=None):
             "history": history[-settings.history_window:],
         }).strip()
         if rewritten != state["question"]:
-            print(f"  [rewrite] '{state['question']}' → '{rewritten}'")
+            logger.debug("[rewrite] %r → %r", state["question"], rewritten)
         return {"active_question": rewritten}
 
     def classify(state: AgentState) -> dict:
@@ -235,7 +254,7 @@ def build_graph(settings: Settings, checkpointer=None):
 
     def rephrase(state: AgentState) -> dict:
         rephrased = (REPHRASE_PROMPT | llm | parser).invoke({"question": state["active_question"]}).strip()
-        print(f"  [rephrase] '{state['active_question']}' → '{rephrased}'")
+        logger.debug("[rephrase] %r → %r", state["active_question"], rephrased)
         return {"active_question": rephrased}
 
     def rerank(state: AgentState) -> dict:
@@ -243,7 +262,7 @@ def build_graph(settings: Settings, checkpointer=None):
         docs = [doc for doc, _ in state["docs"]]
         scores = reranker.predict([(query, doc.page_content) for doc in docs])
         ranked = sorted(zip(docs, scores.tolist()), key=lambda x: x[1], reverse=True)
-        print(f"  [rerank] top score: {ranked[0][1]:.3f}" if ranked else "  [rerank] no docs")
+        logger.debug("[rerank] top score: %.3f" if ranked else "[rerank] no docs", ranked[0][1] if ranked else None)
         return {"docs": [(doc, float(score)) for doc, score in ranked]}
 
     def generate(state: AgentState) -> dict:
@@ -264,7 +283,7 @@ def build_graph(settings: Settings, checkpointer=None):
             "answer": state["answer"],
         }).strip().lower()
         grounded = "not_grounded" not in result
-        print(f"  [grounding] {'grounded' if grounded else 'NOT grounded'}")
+        logger.debug("[grounding] %s", "grounded" if grounded else "NOT grounded")
         return {"grounded": grounded}
 
     def give_up(state: AgentState) -> dict:
@@ -306,8 +325,9 @@ def build_graph(settings: Settings, checkpointer=None):
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     settings = Settings()
-    print(f"Building LangGraph agent (LLM: {settings.llm_model} via {settings.llm_provider})...")
+    logger.info("Building LangGraph agent (LLM: %s via %s)...", settings.llm_model, settings.llm_provider)
     graph = build_graph(settings)
     print("Ready. Type your question (Ctrl+C to exit)\n")
 
@@ -316,18 +336,7 @@ def main() -> None:
             question = input("Q: ").strip()
             if not question:
                 continue
-            result = graph.invoke({
-                "question": question,
-                "active_question": question,
-                "docs": [],
-                "attempts": 0,
-                "answer": "",
-                "confidence_score": 0.0,
-                "gate_result": "",
-                "route": "",
-                "grounded": True,
-                "messages": [],
-            })
+            result = graph.invoke(initial_state(question))
             print(f"\nA: {result['answer']}\n")
         except KeyboardInterrupt:
             print("\nBye!")

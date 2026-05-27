@@ -9,6 +9,23 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docsagent"]
+      interval: 5s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Mount docs/ so you can re-ingest without rebuilding the image.
+    # Run ingest manually: docker compose run --rm app python ingest.py
+    volumes:
+      - ./docs:/app/docs:ro
 
 volumes:
   pgdata:

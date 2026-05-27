@@ -25,7 +25,7 @@ from pathlib import Path
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from agent import Settings, _build_llm, build_graph
+from agent import Settings, _build_llm, build_graph, initial_state
 from prompts import GROUNDING_PROMPT
 
 ANSWER_RELEVANCE_PROMPT = ChatPromptTemplate.from_messages([
@@ -55,20 +55,6 @@ CSV_FIELDS = [
     "docs_retrieved",
     "confidence_score",
 ]
-
-_INITIAL_STATE = {
-    "question": "",
-    "active_question": "",
-    "docs": [],
-    "attempts": 0,
-    "answer": "",
-    "confidence_score": 0.0,
-    "gate_result": "",
-    "route": "",
-    "grounded": True,
-    "messages": [],
-}
-
 
 def _keywords(text: str) -> set[str]:
     return {
@@ -129,7 +115,7 @@ def run_eval(golden_path: Path, out_path: Path) -> None:
         expected = item["expected_answer"]
         print(f"[{i:02d}/{len(golden)}] {question}")
 
-        result = graph.invoke({**_INITIAL_STATE, "question": question, "active_question": question})
+        result = graph.invoke(initial_state(question))
 
         answer = result.get("answer", "")
         docs = result.get("docs", [])

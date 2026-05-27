@@ -1,7 +1,9 @@
 [project]
 name = "docs-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "A local RAG knowledge agent that answers questions about project documentation, built with LangChain, LangGraph, pgvector, and FastAPI."
+authors = [{ name = "Stefanos Zagkotas", email = "stefanoszag@gmail.com" }]
+license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.136.1",

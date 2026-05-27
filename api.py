@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 import psycopg
@@ -7,7 +8,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.postgres import PostgresSaver
 from pydantic import BaseModel
 
-from agent import Settings, build_graph
+from agent import Settings, build_graph, initial_state
 
 
 class AskRequest(BaseModel):
@@ -30,6 +31,8 @@ class SessionSummary(BaseModel):
     title: str
     created_at: str
 
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 settings = Settings()
 
@@ -69,21 +72,7 @@ def health() -> dict:
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest) -> AskResponse:
     config = {"configurable": {"thread_id": req.session_id}}
-    result = app.state.graph.invoke(
-        {
-            "question": req.question,
-            "active_question": req.question,
-            "docs": [],
-            "attempts": 0,
-            "answer": "",
-            "confidence_score": 0.0,
-            "gate_result": "",
-            "route": "",
-            "grounded": True,
-            "messages": [],
-        },
-        config=config,
-    )
+    result = app.state.graph.invoke(initial_state(req.question), config=config)
     with app.state.conn.cursor() as cur:
         cur.execute(
             """

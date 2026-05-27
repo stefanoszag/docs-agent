@@ -220,3 +220,7 @@ __marimo__/
 .idea/
 # eval results (generated output — golden dataset is committed, results are not)
 evals/results.csv
+
+# Claude Code internal files
+CLAUDE.md
+.claude/

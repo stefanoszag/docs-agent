@@ -22,45 +22,44 @@ Re-run any time you add or update documents. It clears and repopulates the colle
 A LangGraph state machine that handles each question through a pipeline of nodes:
 
 ```
-User question
-    │
-    ▼
-  gate ──── chitchat ──→ friendly reply
-    │
-    ├── abuse ──────────→ firm refusal (no LLM)
-    │
-  proceed
-    │
-    ▼
- rewrite_query  (rewrite vague follow-ups using conversation history)
-    │
-    ▼
- classify ──── out_of_scope ──→ "outside scope of documentation"
-    │
-  in_scope
-    │
-    ▼
- retrieve  (BM25 + vector search → RRF merge → top chunks)
-    │
-    ├── score ≥ 0.5, attempt 1 ──→ rephrase ──→ retrieve (retry)
-    │
-    ├── score ≥ 0.5, attempt 2 ──→ "not enough information"
-    │
-  confident
-    │
-    ▼
- rerank  (cross-encoder reorders chunks by relevance)
-    │
-    ▼
- generate  (retrieved context + conversation history → LLM)
-    │
-    ▼
- grounding_check ──── not grounded ──→ "not enough information"
-    │
-  grounded
-    │
-    ▼
-  answer
+                         ┌─────────────────────────────┐
+                         │        user question         │
+                         └──────────────┬──────────────┘
+                                        │
+                                        ▼
+                                      gate
+                                   /    |    \
+                              abuse  chitchat  proceed
+                                │       │        │
+                          firm      friendly   rewrite_query
+                         refusal     reply         │
+                                               classify
+                                             /         \
+                                      out_of_scope    in_scope
+                                           │               │
+                                  "outside scope"       retrieve
+                                                    (BM25 + vector → RRF)
+                                                    /      |         \
+                                               no docs  confident   low confidence
+                                                  │    (score <    (score ≥ threshold)
+                                                  │    threshold)       │
+                                                  │        │        attempts left?
+                                                  │      rerank     yes: rephrase ──┐
+                                                  │   (cross-encoder)  no: give_up  │
+                                                  │        │                        │
+                                                  │     generate  ◄─────────────────┘
+                                                  │   (LLM + context
+                                                  │    + history)
+                                                  │        │
+                                                  │  grounding_check
+                                                  │   (LLM-as-judge)
+                                                  │   /          \
+                                                  │ not        grounded
+                                                  │ grounded      │
+                                                  │        ┌──────┘
+                                                  ▼        ▼
+                                            "not enough   answer
+                                            information"
 ```
 
 - **gate** — first stop for every message; one LLM call classifies as `proceed`, `chitchat`, or `abuse`
@@ -238,7 +237,19 @@ uv run pytest -v
 
 ## Known limitations
 
-**BM25 index is held in memory.** At startup, `build_graph` loads every document chunk from the DB to build the BM25 index (`BM25Retriever.from_documents`). For a personal docs collection this is negligible, but it doesn't scale — a large corpus would consume significant RAM and slow startup. The natural fix for a production version would be to replace `rank-bm25` with Postgres full-text search (`tsvector`/`tsquery`), which runs inside the DB and scales without any in-process memory overhead.
+Limitations of the current implementation and the changes required for a production service.
+
+- **BM25 index held in memory** — `build_graph` loads all document chunks from the DB on every startup to build the BM25 index. Does not scale to large corpora. Production fix: replace `rank-bm25` with Postgres full-text search (`tsvector`/`tsquery`), which runs inside the DB with no in-process memory overhead.
+
+- **Confidence threshold is a hard-coded constant** — `CONFIDENCE_THRESHOLD=0.5` was set by hand. For a production service, this should be calibrated against the eval harness and tracked as a versioned hyperparameter, not a config default.
+
+- **No document-level metadata filtering** — chunks are retrieved from a flat collection with no awareness of source file, section, or recency. A production retriever would attach metadata (filename, last-modified, section heading) and use it to scope or weight results.
+
+- **Checkpoint deletion coupled to LangGraph internals** — `DELETE /sessions/{id}` directly deletes from `checkpoints`, `checkpoint_blobs`, and `checkpoint_writes`. These are `PostgresSaver` implementation details that could change in a library upgrade. Requires a proper delete API on the checkpointer.
+
+- **No API authentication** — all FastAPI endpoints are unauthenticated. A production deployment requires at minimum an API key header or OAuth2.
+
+- **No distributed tracing** — the agent logs to stdout but nothing is shipped to a log aggregator or tracing backend. A production service needs request-level tracing (e.g. OpenTelemetry) to correlate latency with specific retrieval or LLM calls.
 
 ## Switching LLM providers
 
