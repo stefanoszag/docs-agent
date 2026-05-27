@@ -126,6 +126,8 @@ def get_history(session_id: str) -> list[HistoryMessage]:
 
 @app.delete("/sessions/{session_id}", status_code=204)
 def delete_session(session_id: str) -> None:
+    # The three checkpoint tables are LangGraph internals (PostgresSaver exposes no delete API).
+    # If LangGraph renames tables or adds new ones, this will need updating.
     with app.state.conn.cursor() as cur:
         cur.execute("DELETE FROM agent_sessions WHERE session_id = %s", (session_id,))
         cur.execute("DELETE FROM checkpoints WHERE thread_id = %s", (session_id,))
