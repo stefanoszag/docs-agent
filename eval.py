@@ -115,7 +115,7 @@ def run_eval(golden_path: Path, out_path: Path) -> None:
         expected = item["expected_answer"]
         print(f"[{i:02d}/{len(golden)}] {question}")
 
-        result = graph.invoke(initial_state(question))
+        result = graph.invoke(initial_state(question), config={"tags": ["eval"]})
 
         answer = result.get("answer", "")
         docs = result.get("docs", [])

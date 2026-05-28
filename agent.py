@@ -33,7 +33,7 @@ RRF_K = 60
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     db_url: str
     llm_provider: str = "ollama"        # ollama | anthropic | openai

@@ -71,7 +71,12 @@ def health() -> dict:
 
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest) -> AskResponse:
-    config = {"configurable": {"thread_id": req.session_id}}
+    config = {
+        "configurable": {"thread_id": req.session_id},
+        "metadata": {"session_id": req.session_id, "question": req.question},
+        "tags": ["api", settings.llm_provider],
+        "run_name": f"ask/{req.session_id[:8]}",
+    }
     result = app.state.graph.invoke(initial_state(req.question), config=config)
     with app.state.conn.cursor() as cur:
         cur.execute(
