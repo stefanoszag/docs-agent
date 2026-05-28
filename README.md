@@ -99,6 +99,40 @@ A vanilla JS chat UI served by FastAPI:
 - Typing indicator while waiting for a response
 - Enter to send, Shift+Enter for a new line
 
+## Agent behaviour examples
+
+The following screenshots show how the agent handles different types of input.
+
+### Happy path — answering from docs
+
+A question that is in scope and has supporting content in the documentation. The agent retrieves relevant chunks, reranks them, generates an answer, and verifies it is grounded before returning it.
+
+![Happy path](readme_files/happy%20path.png)
+
+### Chitchat — conversational input
+
+A non-question message such as a greeting or a thank-you. The gate node classifies it as `chitchat` and routes it to a short friendly reply, skipping retrieval and generation entirely.
+
+![Chitchat response](readme_files/chitchat%20response.png)
+
+### Abusive input — hardcoded refusal
+
+Offensive or harmful content is caught by the gate node and returned a hardcoded refusal message. No LLM call is made beyond the gate classification itself.
+
+![Abusive response](readme_files/abusive%20response.png)
+
+### Out-of-scope question — scope classifier
+
+A question that is not related to the ingested documentation (e.g. general knowledge). The classify node marks it `out_of_scope` and the agent returns a fixed message without touching the retriever.
+
+![Out of scope response](readme_files/out%20of%20context%20response.png)
+
+### No hallucination — confidence gate and grounding check
+
+A question where the documentation does not contain a specific enough answer. The agent retrieves what it can but either the confidence gate (low vector similarity) or the grounding check (LLM-as-judge) determines that generating an answer would be unreliable, so it declines rather than guessing.
+
+![No hallucination response](readme_files/no%20hallucination%20response%20.png)
+
 ## Stack
 
 | Component | Tool |
@@ -249,7 +283,31 @@ Limitations of the current implementation and the changes required for a product
 
 - **No API authentication** — all FastAPI endpoints are unauthenticated. A production deployment requires at minimum an API key header or OAuth2.
 
-- **No distributed tracing** — the agent logs to stdout but nothing is shipped to a log aggregator or tracing backend. A production service needs request-level tracing (e.g. OpenTelemetry) to correlate latency with specific retrieval or LLM calls.
+## Observability (LangSmith)
+
+All LLM calls, graph nodes, and retrieval steps are automatically traced via [LangSmith](https://smith.langchain.com) when the following env vars are set in `.env`:
+
+```env
+LANGSMITH_TRACING_V2=true
+LANGSMITH_API_KEY=ls__...
+LANGSMITH_PROJECT=docs-agent
+```
+
+Tracing is opt-in — omit these vars to run with zero telemetry. When enabled, every request to `/ask` produces a full trace in the LangSmith UI showing each graph node (`gate`, `classify`, `retrieve`, `rerank`, `generate`, `grounding_check`), the prompts sent, model responses, latency per node, and routing decisions. Runs are tagged with the LLM provider (`ollama`/`anthropic`/`openai`) and session ID for easy filtering. Eval harness runs are tagged `eval` so they are distinguishable from live API traffic.
+
+## Known limitations
+
+Limitations of the current implementation and the changes required for a production service.
+
+- **BM25 index held in memory** — `build_graph` loads all document chunks from the DB on every startup to build the BM25 index. Does not scale to large corpora. Production fix: replace `rank-bm25` with Postgres full-text search (`tsvector`/`tsquery`), which runs inside the DB with no in-process memory overhead.
+
+- **Confidence threshold is a hard-coded constant** — `CONFIDENCE_THRESHOLD=0.5` was set by hand. For a production service, this should be calibrated against the eval harness and tracked as a versioned hyperparameter, not a config default.
+
+- **No document-level metadata filtering** — chunks are retrieved from a flat collection with no awareness of source file, section, or recency. A production retriever would attach metadata (filename, last-modified, section heading) and use it to scope or weight results.
+
+- **Checkpoint deletion coupled to LangGraph internals** — `DELETE /sessions/{id}` directly deletes from `checkpoints`, `checkpoint_blobs`, and `checkpoint_writes`. These are `PostgresSaver` implementation details that could change in a library upgrade. Requires a proper delete API on the checkpointer.
+
+- **No API authentication** — all FastAPI endpoints are unauthenticated. A production deployment requires at minimum an API key header or OAuth2.
 
 ## Switching LLM providers
 
