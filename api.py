@@ -121,8 +121,9 @@ _NODE_STATUS: dict[str, str] = {
 
 
 @app.post("/ask/stream")
-async def ask_stream(req: AskRequest) -> StreamingResponse:
+async def ask_stream(req: AskRequest, request: Request) -> StreamingResponse:
     import asyncio
+    cancel_event = threading.Event()
     config = {
         "configurable": {"thread_id": req.session_id},
         "metadata": {"session_id": req.session_id, "question": req.question},
@@ -139,8 +140,14 @@ async def ask_stream(req: AskRequest) -> StreamingResponse:
                 config=config,
                 stream_mode="updates",
             ):
+                if cancel_event.is_set():
+                    break
                 node_name = next(iter(update))
                 loop.call_soon_threadsafe(queue.put_nowait, ("node", node_name))
+
+            if cancel_event.is_set():
+                loop.call_soon_threadsafe(queue.put_nowait, ("cancelled",))
+                return
 
             final = app.state.graph.get_state(config)
             answer = final.values.get("answer", "") if final and final.values else ""
@@ -157,14 +164,22 @@ async def ask_stream(req: AskRequest) -> StreamingResponse:
                 )
             loop.call_soon_threadsafe(queue.put_nowait, ("done", answer, sources))
         except Exception:
-            logging.getLogger(__name__).exception("Streaming error")
-            loop.call_soon_threadsafe(queue.put_nowait, ("error",))
+            if not cancel_event.is_set():
+                logging.getLogger(__name__).exception("Streaming error")
+                loop.call_soon_threadsafe(queue.put_nowait, ("error",))
 
     threading.Thread(target=run_graph, daemon=True).start()
 
     async def event_stream():
         while True:
-            item = await queue.get()
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    break
+                continue
+
             if item[0] == "node":
                 msg = _NODE_STATUS.get(item[1])
                 if msg:
@@ -173,8 +188,9 @@ async def ask_stream(req: AskRequest) -> StreamingResponse:
                 _, answer, sources = item
                 yield f"data: {json.dumps({'type': 'done', 'answer': answer, 'sources': sources})}\n\n"
                 break
-            elif item[0] == "error":
-                yield f"data: {json.dumps({'type': 'done', 'answer': 'Something went wrong. Please try again.', 'sources': []})}\n\n"
+            elif item[0] in ("error", "cancelled"):
+                if item[0] == "error":
+                    yield f"data: {json.dumps({'type': 'done', 'answer': 'Something went wrong. Please try again.', 'sources': []})}\n\n"
                 break
 
     return StreamingResponse(

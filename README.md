@@ -98,6 +98,7 @@ A vanilla JS chat UI served by FastAPI:
 - **+ New chat** starts a fresh session
 - Hover a session to reveal a delete button
 - Typing indicator while waiting for a response; live status text below the dots shows which graph node is running (gate check, scope classification, retrieval, reranking, generation, grounding verification)
+- Send button becomes a red **■ Stop** button while the agent is processing; clicking it cancels the request immediately
 - Source document references displayed below each AI answer
 - Enter to send, Shift+Enter for a new line
 

@@ -300,6 +300,7 @@
 
     #send:hover   { opacity: 0.9; }
     #send:disabled { opacity: 0.4; cursor: not-allowed; }
+    #send.stop-mode { background: #ef4444; }
   </style>
 </head>
 <body>
@@ -333,6 +334,7 @@
     const emptyEl     = document.getElementById('empty');
     const sessionList = document.getElementById('session-list');
 
+    let abortController = null;
     let currentSessionId = localStorage.getItem('docs_agent_session');
     if (!currentSessionId) {
       currentSessionId = crypto.randomUUID();
@@ -493,12 +495,14 @@
 
       input.value = '';
       input.style.height = 'auto';
-      sendBtn.disabled = true;
       input.disabled = true;
+      sendBtn.textContent = '■ Stop';
+      sendBtn.classList.add('stop-mode');
+
+      abortController = new AbortController();
 
       appendMessage('user', question);
       const typingEl = showTyping();
-
       const statusEl = typingEl.querySelector('.typing-status');
 
       try {
@@ -506,6 +510,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ question, session_id: currentSessionId }),
+          signal: abortController.signal,
         });
 
         if (!res.ok) {
@@ -544,11 +549,15 @@
         appendMessage('ai', answer, sources);
         await loadSessions();
         setActive(currentSessionId);
-      } catch (_) {
+      } catch (err) {
         typingEl.remove();
-        appendMessage('ai', 'Could not reach the server. Is it running?');
+        if (err.name !== 'AbortError') {
+          appendMessage('ai', 'Could not reach the server. Is it running?');
+        }
       } finally {
-        sendBtn.disabled = false;
+        abortController = null;
+        sendBtn.textContent = 'Send';
+        sendBtn.classList.remove('stop-mode');
         input.disabled = false;
         input.focus();
       }
@@ -565,7 +574,9 @@
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuestion(); }
     });
 
-    sendBtn.addEventListener('click', sendQuestion);
+    sendBtn.addEventListener('click', () => {
+      if (abortController) { abortController.abort(); } else { sendQuestion(); }
+    });
     document.getElementById('new-chat').addEventListener('click', newChat);
 
     // ---- init ----
