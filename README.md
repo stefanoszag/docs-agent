@@ -103,9 +103,15 @@ A vanilla JS chat UI served by FastAPI:
 
 The following screenshots show how the agent handles different types of input.
 
+### Real-time agent status
+
+While processing a question, the UI displays live status updates below the typing indicator showing which graph node is currently running — gate check, scope classification, retrieval, reranking, generation, and grounding verification. This gives the user visibility into what the agent is doing rather than waiting on an opaque loading state.
+
+![Agent state report](readme_files/agent%20state%20report.png)
+
 ### Happy path — answering from docs
 
-A question that is in scope and has supporting content in the documentation. The agent retrieves relevant chunks, reranks them, generates an answer, and verifies it is grounded before returning it.
+A question that is in scope and has supporting content in the documentation. The agent retrieves relevant chunks, reranks them, generates an answer, and verifies it is grounded before returning it. Response also contains the reference of the document used to generate the response.
 
 ![Happy path](readme_files/happy%20path.png)
 

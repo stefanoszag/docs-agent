@@ -1,4 +1,6 @@
+import json
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -7,6 +9,7 @@ load_dotenv()
 
 import psycopg
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.postgres import PostgresSaver
@@ -101,6 +104,83 @@ def ask(req: AskRequest) -> AskResponse:
         answer=result["answer"],
         session_id=req.session_id,
         sources=result.get("sources", []),
+    )
+
+
+_NODE_STATUS: dict[str, str] = {
+    "gate":             "Checking input...",
+    "rewrite_query":    "Understanding your question...",
+    "classify":         "Checking scope...",
+    "retrieve":         "Searching documentation...",
+    "rephrase":         "Rephrasing query...",
+    "rerank":           "Ranking results...",
+    "generate":         "Generating answer...",
+    "grounding_check":  "Verifying answer...",
+    "respond_chitchat": "Composing response...",
+}
+
+
+@app.post("/ask/stream")
+async def ask_stream(req: AskRequest) -> StreamingResponse:
+    import asyncio
+    config = {
+        "configurable": {"thread_id": req.session_id},
+        "metadata": {"session_id": req.session_id, "question": req.question},
+        "tags": ["api", "stream", settings.llm_provider],
+        "run_name": f"ask-stream/{req.session_id[:8]}",
+    }
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_event_loop()
+
+    def run_graph() -> None:
+        try:
+            for update in app.state.graph.stream(
+                initial_state(req.question),
+                config=config,
+                stream_mode="updates",
+            ):
+                node_name = next(iter(update))
+                loop.call_soon_threadsafe(queue.put_nowait, ("node", node_name))
+
+            final = app.state.graph.get_state(config)
+            answer = final.values.get("answer", "") if final and final.values else ""
+            sources = final.values.get("sources", []) if final and final.values else []
+
+            with app.state.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO agent_sessions (session_id, title)
+                    VALUES (%s, %s)
+                    ON CONFLICT (session_id) DO NOTHING
+                    """,
+                    (req.session_id, req.question[:80]),
+                )
+            loop.call_soon_threadsafe(queue.put_nowait, ("done", answer, sources))
+        except Exception:
+            logging.getLogger(__name__).exception("Streaming error")
+            loop.call_soon_threadsafe(queue.put_nowait, ("error",))
+
+    threading.Thread(target=run_graph, daemon=True).start()
+
+    async def event_stream():
+        while True:
+            item = await queue.get()
+            if item[0] == "node":
+                msg = _NODE_STATUS.get(item[1])
+                if msg:
+                    yield f"data: {json.dumps({'type': 'status', 'message': msg})}\n\n"
+            elif item[0] == "done":
+                _, answer, sources = item
+                yield f"data: {json.dumps({'type': 'done', 'answer': answer, 'sources': sources})}\n\n"
+                break
+            elif item[0] == "error":
+                yield f"data: {json.dumps({'type': 'done', 'answer': 'Something went wrong. Please try again.', 'sources': []})}\n\n"
+                break
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

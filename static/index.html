@@ -223,6 +223,14 @@
       padding: 2px 7px;
     }
 
+    .typing-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      padding: 4px 4px 0;
+      font-style: italic;
+      min-height: 1.1em;
+    }
+
     .typing {
       display: flex;
       gap: 4px;
@@ -458,8 +466,12 @@
       dots.className = 'typing';
       dots.innerHTML = '<span></span><span></span><span></span>';
 
+      const status = document.createElement('div');
+      status.className = 'typing-status';
+
       wrapper.appendChild(label);
       wrapper.appendChild(dots);
+      wrapper.appendChild(status);
       chatEl.appendChild(wrapper);
       chatEl.scrollTop = chatEl.scrollHeight;
       return wrapper;
@@ -487,23 +499,50 @@
       appendMessage('user', question);
       const typingEl = showTyping();
 
+      const statusEl = typingEl.querySelector('.typing-status');
+
       try {
-        const res = await fetch('/ask', {
+        const res = await fetch('/ask/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ question, session_id: currentSessionId }),
         });
 
-        typingEl.remove();
-
         if (!res.ok) {
+          typingEl.remove();
           appendMessage('ai', 'Something went wrong. Please try again.');
           return;
         }
 
-        const data = await res.json();
-        appendMessage('ai', data.answer, data.sources || []);
-        await loadSessions();          // adds the session to sidebar if it's the first message
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let answer = '';
+        let sources = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop();
+
+          for (const part of parts) {
+            if (!part.startsWith('data: ')) continue;
+            const event = JSON.parse(part.slice(6));
+            if (event.type === 'status') {
+              statusEl.textContent = event.message;
+            } else if (event.type === 'done') {
+              answer = event.answer;
+              sources = event.sources || [];
+            }
+          }
+        }
+
+        typingEl.remove();
+        appendMessage('ai', answer, sources);
+        await loadSessions();
         setActive(currentSessionId);
       } catch (_) {
         typingEl.remove();
