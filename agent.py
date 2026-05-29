@@ -219,7 +219,7 @@ def build_graph(settings: Settings, checkpointer=None):
     def rewrite_query(state: AgentState) -> dict:
         history = state["messages"]
         if not history:
-            return {}
+            return {"active_question": state["question"]}
         rewritten = (QUERY_REWRITE_PROMPT | llm | parser).invoke({
             "question": state["question"],
             "history": history[-settings.history_window:],

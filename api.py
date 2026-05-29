@@ -111,7 +111,7 @@ def list_sessions() -> list[SessionSummary]:
 def get_history(session_id: str) -> list[HistoryMessage]:
     config = {"configurable": {"thread_id": session_id}}
     state = app.state.graph.get_state(config)
-    if not state or not state.values:
+    if state is None or not state.values:
         raise HTTPException(status_code=404, detail="Session not found")
     return [
         HistoryMessage(
