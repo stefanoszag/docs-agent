@@ -23,6 +23,7 @@ class AskRequest(BaseModel):
 class AskResponse(BaseModel):
     answer: str
     session_id: str
+    sources: list[str]
 
 
 class HistoryMessage(BaseModel):
@@ -96,7 +97,11 @@ def ask(req: AskRequest) -> AskResponse:
             """,
             (req.session_id, req.question[:80]),
         )
-    return AskResponse(answer=result["answer"], session_id=req.session_id)
+    return AskResponse(
+        answer=result["answer"],
+        session_id=req.session_id,
+        sources=result.get("sources", []),
+    )
 
 
 @app.get("/sessions", response_model=list[SessionSummary])

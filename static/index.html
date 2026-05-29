@@ -207,6 +207,22 @@
       border-bottom-left-radius: 4px;
     }
 
+    .sources {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+      padding: 0 4px;
+    }
+
+    .source-tag {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      background: var(--border);
+      border-radius: 4px;
+      padding: 2px 7px;
+    }
+
     .typing {
       display: flex;
       gap: 4px;
@@ -396,7 +412,7 @@
 
     // ---- messages ----
 
-    function appendMessage(role, content) {
+    function appendMessage(role, content, sources = []) {
       emptyEl.style.display = 'none';
 
       const wrapper = document.createElement('div');
@@ -412,6 +428,19 @@
 
       wrapper.appendChild(label);
       wrapper.appendChild(bubble);
+
+      if (role === 'ai' && sources.length > 0) {
+        const sourceEl = document.createElement('div');
+        sourceEl.className = 'sources';
+        sources.forEach(s => {
+          const tag = document.createElement('span');
+          tag.className = 'source-tag';
+          tag.textContent = s;
+          sourceEl.appendChild(tag);
+        });
+        wrapper.appendChild(sourceEl);
+      }
+
       chatEl.appendChild(wrapper);
       chatEl.scrollTop = chatEl.scrollHeight;
     }
@@ -472,7 +501,8 @@
           return;
         }
 
-        appendMessage('ai', (await res.json()).answer);
+        const data = await res.json();
+        appendMessage('ai', data.answer, data.sources || []);
         await loadSessions();          // adds the session to sidebar if it's the first message
         setActive(currentSessionId);
       } catch (_) {
