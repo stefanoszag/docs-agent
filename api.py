@@ -6,18 +6,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import psycopg
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.postgres import PostgresSaver
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent import Settings, build_graph, initial_state
 
 
 class AskRequest(BaseModel):
-    question: str
-    session_id: str
+    question: str = Field(min_length=1, max_length=5000)
+    session_id: str = Field(pattern=r"^[0-9a-f-]{36}$")
 
 
 class AskResponse(BaseModel):
@@ -69,8 +69,13 @@ app = FastAPI(title="docs-agent", lifespan=lifespan)
 
 
 @app.get("/health")
-def health() -> dict:
-    return {"status": "ok"}
+def health(request: Request) -> dict:
+    try:
+        with request.app.state.conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        return {"status": "ok", "db": "ok"}
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database unavailable")
 
 
 @app.post("/ask", response_model=AskResponse)
@@ -95,10 +100,14 @@ def ask(req: AskRequest) -> AskResponse:
 
 
 @app.get("/sessions", response_model=list[SessionSummary])
-def list_sessions() -> list[SessionSummary]:
+def list_sessions(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[SessionSummary]:
     with app.state.conn.cursor() as cur:
         cur.execute(
-            "SELECT session_id, title, created_at FROM agent_sessions ORDER BY created_at DESC"
+            "SELECT session_id, title, created_at FROM agent_sessions ORDER BY created_at DESC LIMIT %s OFFSET %s",
+            (limit, offset),
         )
         rows = cur.fetchall()
     return [
