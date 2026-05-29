@@ -81,6 +81,7 @@ A FastAPI server that wraps the agent and manages multiple persistent chat sessi
 |---|---|
 | `GET /` | Chat UI |
 | `POST /ask` | Ask a question `{question, session_id}` |
+| `POST /ask/stream` | SSE stream — node status events then final answer |
 | `GET /sessions` | List all sessions |
 | `GET /sessions/{id}/history` | Full message history for a session |
 | `DELETE /sessions/{id}` | Delete a session and its checkpoint data |
@@ -96,7 +97,8 @@ A vanilla JS chat UI served by FastAPI:
 - Click any session to restore its full conversation history
 - **+ New chat** starts a fresh session
 - Hover a session to reveal a delete button
-- Typing indicator while waiting for a response
+- Typing indicator while waiting for a response; live status text below the dots shows which graph node is running (gate check, scope classification, retrieval, reranking, generation, grounding verification)
+- Source document references displayed below each AI answer
 - Enter to send, Shift+Enter for a new line
 
 ## Agent behaviour examples
@@ -259,11 +261,11 @@ Requires Ollama and Postgres to be running (same as the agent itself).
 uv run python eval.py
 ```
 
-Results are written to `evals/results.csv` (gitignored) with one row per question and a summary row at the end. Pass `--golden` and `--out` to override the default paths.
+Results are written to `evals/results.csv` (gitignored) with one row per question and a summary row at the end. Each row also records run metadata — `run_at` (UTC timestamp), `llm_provider`, `llm_model`, and `confidence_threshold` — so results from different model configs are comparable. Pass `--golden` and `--out` to override the default paths.
 
 ## Running the tests
 
-Unit tests cover `rrf_merge`, `format_docs`, all four routing functions, and every prompt template. They require no running services (no Ollama, no Postgres).
+72 unit and integration tests cover the agent graph (routing, `rrf_merge`, `format_docs`, prompt templates), the FastAPI endpoints (health, ask, sessions, history, delete), and the eval scoring functions (`score_groundedness`, `score_answer_relevance`, `score_retrieval_precision`). They require no running services (no Ollama, no Postgres).
 
 ```bash
 uv run pytest
@@ -300,20 +302,6 @@ LANGSMITH_PROJECT=docs-agent
 ```
 
 Tracing is opt-in — omit these vars to run with zero telemetry. When enabled, every request to `/ask` produces a full trace in the LangSmith UI showing each graph node (`gate`, `classify`, `retrieve`, `rerank`, `generate`, `grounding_check`), the prompts sent, model responses, latency per node, and routing decisions. Runs are tagged with the LLM provider (`ollama`/`anthropic`/`openai`) and session ID for easy filtering. Eval harness runs are tagged `eval` so they are distinguishable from live API traffic.
-
-## Known limitations
-
-Limitations of the current implementation and the changes required for a production service.
-
-- **BM25 index held in memory** — `build_graph` loads all document chunks from the DB on every startup to build the BM25 index. Does not scale to large corpora. Production fix: replace `rank-bm25` with Postgres full-text search (`tsvector`/`tsquery`), which runs inside the DB with no in-process memory overhead.
-
-- **Confidence threshold is a hard-coded constant** — `CONFIDENCE_THRESHOLD=0.5` was set by hand. For a production service, this should be calibrated against the eval harness and tracked as a versioned hyperparameter, not a config default.
-
-- **No document-level metadata filtering** — chunks are retrieved from a flat collection with no awareness of source file, section, or recency. A production retriever would attach metadata (filename, last-modified, section heading) and use it to scope or weight results.
-
-- **Checkpoint deletion coupled to LangGraph internals** — `DELETE /sessions/{id}` directly deletes from `checkpoints`, `checkpoint_blobs`, and `checkpoint_writes`. These are `PostgresSaver` implementation details that could change in a library upgrade. Requires a proper delete API on the checkpointer.
-
-- **No API authentication** — all FastAPI endpoints are unauthenticated. A production deployment requires at minimum an API key header or OAuth2.
 
 ## Switching LLM providers
 
