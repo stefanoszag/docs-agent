@@ -1,4 +1,6 @@
+import json
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -6,23 +8,25 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import psycopg
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.postgres import PostgresSaver
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent import Settings, build_graph, initial_state
 
 
 class AskRequest(BaseModel):
-    question: str
-    session_id: str
+    question: str = Field(min_length=1, max_length=5000)
+    session_id: str = Field(pattern=r"^[0-9a-f-]{36}$")
 
 
 class AskResponse(BaseModel):
     answer: str
     session_id: str
+    sources: list[str]
 
 
 class HistoryMessage(BaseModel):
@@ -69,8 +73,13 @@ app = FastAPI(title="docs-agent", lifespan=lifespan)
 
 
 @app.get("/health")
-def health() -> dict:
-    return {"status": "ok"}
+def health(request: Request) -> dict:
+    try:
+        with request.app.state.conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        return {"status": "ok", "db": "ok"}
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database unavailable")
 
 
 @app.post("/ask", response_model=AskResponse)
@@ -91,14 +100,115 @@ def ask(req: AskRequest) -> AskResponse:
             """,
             (req.session_id, req.question[:80]),
         )
-    return AskResponse(answer=result["answer"], session_id=req.session_id)
+    return AskResponse(
+        answer=result["answer"],
+        session_id=req.session_id,
+        sources=result.get("sources", []),
+    )
+
+
+_NODE_STATUS: dict[str, str] = {
+    "gate":             "Checking input...",
+    "rewrite_query":    "Understanding your question...",
+    "classify":         "Checking scope...",
+    "retrieve":         "Searching documentation...",
+    "rephrase":         "Rephrasing query...",
+    "rerank":           "Ranking results...",
+    "generate":         "Generating answer...",
+    "grounding_check":  "Verifying answer...",
+    "respond_chitchat": "Composing response...",
+}
+
+
+@app.post("/ask/stream")
+async def ask_stream(req: AskRequest, request: Request) -> StreamingResponse:
+    import asyncio
+    cancel_event = threading.Event()
+    config = {
+        "configurable": {"thread_id": req.session_id},
+        "metadata": {"session_id": req.session_id, "question": req.question},
+        "tags": ["api", "stream", settings.llm_provider],
+        "run_name": f"ask-stream/{req.session_id[:8]}",
+    }
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_event_loop()
+
+    def run_graph() -> None:
+        try:
+            for update in app.state.graph.stream(
+                initial_state(req.question),
+                config=config,
+                stream_mode="updates",
+            ):
+                if cancel_event.is_set():
+                    break
+                node_name = next(iter(update))
+                loop.call_soon_threadsafe(queue.put_nowait, ("node", node_name))
+
+            if cancel_event.is_set():
+                loop.call_soon_threadsafe(queue.put_nowait, ("cancelled",))
+                return
+
+            final = app.state.graph.get_state(config)
+            answer = final.values.get("answer", "") if final and final.values else ""
+            sources = final.values.get("sources", []) if final and final.values else []
+
+            with app.state.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO agent_sessions (session_id, title)
+                    VALUES (%s, %s)
+                    ON CONFLICT (session_id) DO NOTHING
+                    """,
+                    (req.session_id, req.question[:80]),
+                )
+            loop.call_soon_threadsafe(queue.put_nowait, ("done", answer, sources))
+        except Exception:
+            if not cancel_event.is_set():
+                logging.getLogger(__name__).exception("Streaming error")
+                loop.call_soon_threadsafe(queue.put_nowait, ("error",))
+
+    threading.Thread(target=run_graph, daemon=True).start()
+
+    async def event_stream():
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    break
+                continue
+
+            if item[0] == "node":
+                msg = _NODE_STATUS.get(item[1])
+                if msg:
+                    yield f"data: {json.dumps({'type': 'status', 'message': msg})}\n\n"
+            elif item[0] == "done":
+                _, answer, sources = item
+                yield f"data: {json.dumps({'type': 'done', 'answer': answer, 'sources': sources})}\n\n"
+                break
+            elif item[0] in ("error", "cancelled"):
+                if item[0] == "error":
+                    yield f"data: {json.dumps({'type': 'done', 'answer': 'Something went wrong. Please try again.', 'sources': []})}\n\n"
+                break
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/sessions", response_model=list[SessionSummary])
-def list_sessions() -> list[SessionSummary]:
+def list_sessions(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[SessionSummary]:
     with app.state.conn.cursor() as cur:
         cur.execute(
-            "SELECT session_id, title, created_at FROM agent_sessions ORDER BY created_at DESC"
+            "SELECT session_id, title, created_at FROM agent_sessions ORDER BY created_at DESC LIMIT %s OFFSET %s",
+            (limit, offset),
         )
         rows = cur.fetchall()
     return [
@@ -111,7 +221,7 @@ def list_sessions() -> list[SessionSummary]:
 def get_history(session_id: str) -> list[HistoryMessage]:
     config = {"configurable": {"thread_id": session_id}}
     state = app.state.graph.get_state(config)
-    if not state or not state.values:
+    if state is None or not state.values:
         raise HTTPException(status_code=404, detail="Session not found")
     return [
         HistoryMessage(

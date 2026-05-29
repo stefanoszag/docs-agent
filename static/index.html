@@ -207,6 +207,30 @@
       border-bottom-left-radius: 4px;
     }
 
+    .sources {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+      padding: 0 4px;
+    }
+
+    .source-tag {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      background: var(--border);
+      border-radius: 4px;
+      padding: 2px 7px;
+    }
+
+    .typing-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      padding: 4px 4px 0;
+      font-style: italic;
+      min-height: 1.1em;
+    }
+
     .typing {
       display: flex;
       gap: 4px;
@@ -276,6 +300,7 @@
 
     #send:hover   { opacity: 0.9; }
     #send:disabled { opacity: 0.4; cursor: not-allowed; }
+    #send.stop-mode { background: #ef4444; }
   </style>
 </head>
 <body>
@@ -309,6 +334,7 @@
     const emptyEl     = document.getElementById('empty');
     const sessionList = document.getElementById('session-list');
 
+    let abortController = null;
     let currentSessionId = localStorage.getItem('docs_agent_session');
     if (!currentSessionId) {
       currentSessionId = crypto.randomUUID();
@@ -396,7 +422,7 @@
 
     // ---- messages ----
 
-    function appendMessage(role, content) {
+    function appendMessage(role, content, sources = []) {
       emptyEl.style.display = 'none';
 
       const wrapper = document.createElement('div');
@@ -412,6 +438,19 @@
 
       wrapper.appendChild(label);
       wrapper.appendChild(bubble);
+
+      if (role === 'ai' && sources.length > 0) {
+        const sourceEl = document.createElement('div');
+        sourceEl.className = 'sources';
+        sources.forEach(s => {
+          const tag = document.createElement('span');
+          tag.className = 'source-tag';
+          tag.textContent = s;
+          sourceEl.appendChild(tag);
+        });
+        wrapper.appendChild(sourceEl);
+      }
+
       chatEl.appendChild(wrapper);
       chatEl.scrollTop = chatEl.scrollHeight;
     }
@@ -429,8 +468,12 @@
       dots.className = 'typing';
       dots.innerHTML = '<span></span><span></span><span></span>';
 
+      const status = document.createElement('div');
+      status.className = 'typing-status';
+
       wrapper.appendChild(label);
       wrapper.appendChild(dots);
+      wrapper.appendChild(status);
       chatEl.appendChild(wrapper);
       chatEl.scrollTop = chatEl.scrollHeight;
       return wrapper;
@@ -452,34 +495,69 @@
 
       input.value = '';
       input.style.height = 'auto';
-      sendBtn.disabled = true;
       input.disabled = true;
+      sendBtn.textContent = '■ Stop';
+      sendBtn.classList.add('stop-mode');
+
+      abortController = new AbortController();
 
       appendMessage('user', question);
       const typingEl = showTyping();
+      const statusEl = typingEl.querySelector('.typing-status');
 
       try {
-        const res = await fetch('/ask', {
+        const res = await fetch('/ask/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ question, session_id: currentSessionId }),
+          signal: abortController.signal,
         });
 
-        typingEl.remove();
-
         if (!res.ok) {
+          typingEl.remove();
           appendMessage('ai', 'Something went wrong. Please try again.');
           return;
         }
 
-        appendMessage('ai', (await res.json()).answer);
-        await loadSessions();          // adds the session to sidebar if it's the first message
-        setActive(currentSessionId);
-      } catch (_) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let answer = '';
+        let sources = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop();
+
+          for (const part of parts) {
+            if (!part.startsWith('data: ')) continue;
+            const event = JSON.parse(part.slice(6));
+            if (event.type === 'status') {
+              statusEl.textContent = event.message;
+            } else if (event.type === 'done') {
+              answer = event.answer;
+              sources = event.sources || [];
+            }
+          }
+        }
+
         typingEl.remove();
-        appendMessage('ai', 'Could not reach the server. Is it running?');
+        appendMessage('ai', answer, sources);
+        await loadSessions();
+        setActive(currentSessionId);
+      } catch (err) {
+        typingEl.remove();
+        if (err.name !== 'AbortError') {
+          appendMessage('ai', 'Could not reach the server. Is it running?');
+        }
       } finally {
-        sendBtn.disabled = false;
+        abortController = null;
+        sendBtn.textContent = 'Send';
+        sendBtn.classList.remove('stop-mode');
         input.disabled = false;
         input.focus();
       }
@@ -496,7 +574,9 @@
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuestion(); }
     });
 
-    sendBtn.addEventListener('click', sendQuestion);
+    sendBtn.addEventListener('click', () => {
+      if (abortController) { abortController.abort(); } else { sendQuestion(); }
+    });
     document.getElementById('new-chat').addEventListener('click', newChat);
 
     // ---- init ----

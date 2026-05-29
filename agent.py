@@ -71,6 +71,7 @@ class AgentState(TypedDict):
     docs: list[tuple[Document, float]]
     attempts: int
     answer: str
+    sources: list[str]      # unique source filenames that backed the answer
     confidence_score: float  # best raw vector cosine distance (lower = more confident)
     gate_result: str         # "proceed" | "chitchat" | "abuse"
     route: str               # "in_scope" | "out_of_scope" (set by classify)
@@ -90,6 +91,7 @@ def initial_state(question: str) -> dict:
         "docs": [],
         "attempts": 0,
         "answer": "",
+        "sources": [],
         "confidence_score": 0.0,
         "gate_result": "",
         "route": "",
@@ -219,7 +221,7 @@ def build_graph(settings: Settings, checkpointer=None):
     def rewrite_query(state: AgentState) -> dict:
         history = state["messages"]
         if not history:
-            return {}
+            return {"active_question": state["question"]}
         rewritten = (QUERY_REWRITE_PROMPT | llm | parser).invoke({
             "question": state["question"],
             "history": history[-settings.history_window:],
@@ -272,8 +274,14 @@ def build_graph(settings: Settings, checkpointer=None):
             "question": state["question"],
             "history": history,
         })
+        sources = list(dict.fromkeys(
+            doc.metadata["source"].split("/")[-1]
+            for doc, _ in state["docs"]
+            if doc.metadata.get("source")
+        ))
         return {
             "answer": answer,
+            "sources": sources,
             "messages": [HumanMessage(content=state["question"]), AIMessage(content=answer)],
         }
 

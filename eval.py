@@ -20,6 +20,7 @@ import csv
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from langchain_core.output_parsers import StrOutputParser
@@ -54,6 +55,10 @@ CSV_FIELDS = [
     "retrieval_precision",
     "docs_retrieved",
     "confidence_score",
+    "run_at",
+    "llm_provider",
+    "llm_model",
+    "confidence_threshold",
 ]
 
 def _keywords(text: str) -> set[str]:
@@ -85,7 +90,11 @@ def score_groundedness(llm, docs: list, answer: str) -> int:
         "context": context,
         "answer": answer,
     }).strip().lower()
-    return 0 if "not_grounded" in result else 1
+    # Check both underscore ("not_grounded") and natural-language ("not grounded") variants
+    if "not_grounded" in result or "not grounded" in result:
+        return 0
+    # Unknown LLM output defaults to 0 (conservative — don't assume grounded)
+    return 1 if "grounded" in result else 0
 
 
 def score_answer_relevance(llm, question: str, answer: str) -> int:
@@ -95,7 +104,11 @@ def score_answer_relevance(llm, question: str, answer: str) -> int:
         "question": question,
         "answer": answer,
     }).strip().lower()
-    return 1 if "relevant" in result and "not_relevant" not in result else 0
+    # Check both underscore ("not_relevant") and natural-language ("not relevant") variants
+    if "not_relevant" in result or "not relevant" in result:
+        return 0
+    # Unknown LLM output defaults to 0 (conservative)
+    return 1 if "relevant" in result else 0
 
 
 def run_eval(golden_path: Path, out_path: Path) -> None:
@@ -107,6 +120,14 @@ def run_eval(golden_path: Path, out_path: Path) -> None:
     graph = build_graph(settings)
     llm = _build_llm(settings)
     print("Ready.\n")
+
+    run_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    run_meta = {
+        "run_at": run_at,
+        "llm_provider": settings.llm_provider,
+        "llm_model": settings.llm_model,
+        "confidence_threshold": settings.confidence_threshold,
+    }
 
     rows: list[dict] = []
 
@@ -136,6 +157,7 @@ def run_eval(golden_path: Path, out_path: Path) -> None:
             "retrieval_precision": p,
             "docs_retrieved": len(docs),
             "confidence_score": round(confidence, 4),
+            **run_meta,
         })
 
     n = len(rows)
@@ -148,6 +170,7 @@ def run_eval(golden_path: Path, out_path: Path) -> None:
         "retrieval_precision": round(sum(r["retrieval_precision"] for r in rows) / n, 3),
         "docs_retrieved": round(sum(r["docs_retrieved"] for r in rows) / n, 1),
         "confidence_score": round(sum(r["confidence_score"] for r in rows) / n, 4),
+        **run_meta,
     }
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
