@@ -13,6 +13,7 @@ def make_state(**overrides) -> dict:
         "docs": [],
         "attempts": 1,
         "answer": "",
+        "sources": [],
         "confidence_score": 0.2,
         "gate_result": "proceed",
         "route": "in_scope",
