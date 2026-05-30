@@ -21,46 +21,7 @@ Re-run any time you add or update documents. It clears and repopulates the colle
 
 A LangGraph state machine that handles each question through a pipeline of nodes:
 
-```
-                         ┌─────────────────────────────┐
-                         │        user question         │
-                         └──────────────┬──────────────┘
-                                        │
-                                        ▼
-                                      gate
-                                   /    |    \
-                              abuse  chitchat  proceed
-                                │       │        │
-                          firm      friendly   rewrite_query
-                         refusal     reply         │
-                                               classify
-                                             /         \
-                                      out_of_scope    in_scope
-                                           │               │
-                                  "outside scope"       retrieve
-                                                    (BM25 + vector → RRF)
-                                                    /      |         \
-                                               no docs  confident   low confidence
-                                                  │    (score <    (score ≥ threshold)
-                                                  │    threshold)       │
-                                                  │        │        attempts left?
-                                                  │      rerank     yes: rephrase ──┐
-                                                  │   (cross-encoder)  no: give_up  │
-                                                  │        │                        │
-                                                  │     generate  ◄─────────────────┘
-                                                  │   (LLM + context
-                                                  │    + history)
-                                                  │        │
-                                                  │  grounding_check
-                                                  │   (LLM-as-judge)
-                                                  │   /          \
-                                                  │ not        grounded
-                                                  │ grounded      │
-                                                  │        ┌──────┘
-                                                  ▼        ▼
-                                            "not enough   answer
-                                            information"
-```
+![Architecture Diagram](readme_files/architecture%20diagram.png)
 
 - **gate** — first stop for every message; one LLM call classifies as `proceed`, `chitchat`, or `abuse`
   - *chitchat* (greetings, thanks, small talk) → short friendly reply
