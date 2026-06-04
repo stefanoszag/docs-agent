@@ -50,6 +50,32 @@ A FastAPI server that wraps the agent and manages multiple persistent chat sessi
 
 Session history is persisted to Postgres via LangGraph's `PostgresSaver` checkpointer. Each session is keyed by a `session_id` UUID, which the browser generates and stores in `localStorage`.
 
+### MCP Server (`mcp_server.py`)
+
+An [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that exposes the knowledge base to any MCP client — Claude Desktop, Claude Code, or any other compatible tool. Once registered, the client can query your documentation directly from a conversation without opening the chat UI.
+
+The server exposes three tools:
+
+| Tool | Description |
+|---|---|
+| `search_docs(query, k=5)` | Embeds the query and returns the top-k raw chunks from the vector store |
+| `ask_agent(question, session_id?)` | Runs the full LangGraph pipeline and returns a synthesized answer |
+| `list_sessions()` | Lists the 50 most recent sessions (shared with the FastAPI UI) |
+
+#### Choosing between `search_docs` and `ask_agent`
+
+| | `search_docs` | `ask_agent` |
+|---|---|---|
+| **What it does** | Returns raw chunks; the MCP client synthesizes the answer | Runs the full pipeline; returns a finished answer |
+| **LLM for answering** | The MCP client (e.g. Claude) | Whichever provider the server is configured with (`LLM_PROVIDER`) |
+| **Embedding provider required** | Yes | Yes |
+| **Configured LLM required** | No | Yes |
+| **Answer quality** | As good as the client model | Depends on the configured provider and model |
+| **Pipeline features** | None — raw retrieval only | Gate, classifier, confidence gate, rerank, grounding check |
+| **When to use** | The configured LLM is unavailable, or you want the client to synthesize | You want the full pipeline with scope classification, confidence gating, and grounding verification |
+
+Use `search_docs` when the backend LLM is unavailable or when you want the MCP client to reason over the raw source material directly. Use `ask_agent` when you want the complete pipeline applied before the answer is returned — the LLM used is whichever provider is set in `.env` (`ollama`, `anthropic`, or `openai`).
+
 ### Frontend (`static/index.html`)
 
 A vanilla JS chat UI served by FastAPI:
@@ -62,6 +88,42 @@ A vanilla JS chat UI served by FastAPI:
 - Send button becomes a red **■ Stop** button while the agent is processing; clicking it cancels the request immediately
 - Source document references displayed below each AI answer
 - Enter to send, Shift+Enter for a new line
+
+## Connecting to Claude Desktop (MCP)
+
+**1. Register the server**
+
+Add the following to `~/Library/Application Support/Claude/claude_desktop_config.json` (create the file if it doesn't exist):
+
+```json
+{
+  "mcpServers": {
+    "docs-agent": {
+      "command": "/opt/homebrew/bin/uv",
+      "args": [
+        "--project", "/path/to/docs-agent",
+        "run", "python",
+        "/path/to/docs-agent/mcp_server.py"
+      ]
+    }
+  }
+}
+```
+
+Replace `/path/to/docs-agent` with the absolute path to this repo. Use `which uv` to confirm the uv path.
+
+**2. Restart Claude Desktop**
+
+Quit and relaunch. A hammer icon in the chat input confirms MCP tools are loaded.
+
+**3. Use it**
+
+The MCP server starts instantly and initialises lazily on the first tool call (~20–30s). Control which tool Claude uses by phrasing your request:
+
+- *"Search my docs for X"* → uses `search_docs` (thin retrieval, Claude synthesizes)
+- *"Ask my agent about X"* → uses `ask_agent` (full local pipeline via Ollama)
+
+Sessions started via the MCP server appear in the FastAPI chat UI and vice versa — they share the same Postgres backend.
 
 ## Agent behaviour examples
 
@@ -180,6 +242,7 @@ docs-agent/
 ├── ingest.py               # Chunk, embed, and store docs into pgvector
 ├── agent.py                # LangGraph agent (graph, nodes, state)
 ├── api.py                  # FastAPI app — HTTP endpoints + session management
+├── mcp_server.py           # MCP server — exposes search_docs and ask_agent to Claude Desktop
 ├── prompts.py              # Prompt templates
 ├── docker-compose.yml      # Postgres + pgvector
 ├── pyproject.toml          # Dependencies managed by uv
